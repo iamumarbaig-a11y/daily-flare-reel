@@ -17,6 +17,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+      - name: Restore extracted APK background asset
+        run: |
+          mkdir -p app/src/main/res/drawable-nodpi
+          base64 -d baseline/daily_flare_background.jpg.b64 > app/src/main/res/drawable-nodpi/daily_flare_background.jpg
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
       - name: Upload APK
