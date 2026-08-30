@@ -2,6 +2,7 @@ package com.thedailyflare.reel
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
@@ -9,6 +10,8 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
+import java.io.File
+import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
     private lateinit var preview: ReelPreviewView
@@ -53,7 +56,7 @@ class MainActivity : Activity() {
             }
         }
         val export = Button(this).apply {
-            text = "EXPORT 15-SECOND REEL"
+            text = "EXPORT 18-SECOND REEL"
             setOnClickListener { exportReel() }
         }
         listOf(image, music, text, add, export).forEach {
@@ -97,10 +100,44 @@ class MainActivity : Activity() {
     }
 
     private fun exportReel() {
-        if (imageUri == null) return toast("No image selected")
+        val background = preview.backgroundBitmap
+        if (background == null) return toast("No image selected")
         if (audioUri == null) return toast("No music selected")
-        toast("Rendering video and music")
+
+        toast("Rendering 15s reel + 3s CTA")
+        thread(name = "daily-flare-export") {
+            try {
+                val video = File(cacheDir, "daily_flare_video.mp4")
+                val finalOutput = File(getExternalFilesDir(null), "daily_flare_reel_18s.mp4")
+                if (video.exists()) video.delete()
+                if (finalOutput.exists()) finalOutput.delete()
+
+                ReelEncoder().encode(
+                    background = background,
+                    title = preview.title,
+                    headlines = headlines.toList(),
+                    output = video
+                )
+
+                val audio = File(cacheDir, "daily_flare_audio.mp4")
+                if (audio.exists()) audio.delete()
+                val audioReady = audioUri?.let { AudioTranscoder(this).transcode(it, audio) } == true
+                val success = if (audioReady) {
+                    AudioMuxer().mux(video, audio, finalOutput)
+                } else {
+                    video.copyTo(finalOutput, overwrite = true)
+                    true
+                }
+
+                runOnUiThread {
+                    if (success) toast("Export complete: 15s news + 3s CTA")
+                    else toast("Export failed")
+                }
+            } catch (e: Exception) {
+                runOnUiThread { toast("Export failed: ${e.message ?: "unknown error"}") }
+            }
+        }
     }
 
-    private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 }
