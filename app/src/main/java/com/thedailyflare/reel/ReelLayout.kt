@@ -54,34 +54,60 @@ object ReelLayout {
         }
         val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
         var y = TOP
+
+        // Main heading: every wrapped line gets its own tight white rounded block.
         val titleLines = wrap(title.ifBlank { "Main heading" }, titlePaint, RIGHT - LEFT - 44f)
         val titleLineHeight = titlePaint.textSize + 8f
         val titleBlockHeight = titleLineHeight + 28f
         for ((index, line) in titleLines.withIndex()) {
             val blockWidth = minOf(titlePaint.measureText(line) + 44f, RIGHT - LEFT)
-            canvas.drawRoundRect(RectF(LEFT, y, LEFT + blockWidth, y + titleBlockHeight), 20f, 20f, white)
+            canvas.drawRoundRect(
+                RectF(LEFT, y, LEFT + blockWidth, y + titleBlockHeight),
+                20f, 20f, white
+            )
             canvas.drawText(line, LEFT + 22f, y + titlePaint.textSize + 2f, titlePaint)
             y += titleBlockHeight + if (index == titleLines.lastIndex) GAP else SAME_TEXT_GAP
         }
+
+        // Preserve the existing gap between the main heading and the subheadings.
         y += 18f
+
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
             textSize = 34f
-            typeface = Typeface.create("sans", Typeface.NORMAL)
+            typeface = Typeface.create("sans", Typeface.BOLD)
         }
         val maxTextWidth = RIGHT - LEFT - 44f
         val lineHeight = 43f
-        val blockHeight = lineHeight + 24f
+        val horizontalPadding = 22f
+        val verticalPadding = 12f
+
+        // Each subheading/news item gets ONE white rounded background around the
+        // complete wrapped paragraph. Wrapped lines inside that same field use
+        // the requested -0.1 vertical adjustment, while the gap to the next
+        // separate subheading remains unchanged.
         for (headline in headlines.take(7)) {
             if (headline.isBlank()) continue
             val lines = wrap(headline, textPaint, maxTextWidth)
+            val longestLineWidth = lines.maxOf { textPaint.measureText(it) }
+            val blockWidth = minOf(longestLineWidth + horizontalPadding * 2f, RIGHT - LEFT)
+            val blockHeight = verticalPadding * 2f +
+                    lineHeight * lines.size + SAME_TEXT_GAP * (lines.size - 1)
+
+            canvas.drawRoundRect(
+                RectF(LEFT, y, LEFT + blockWidth, y + blockHeight),
+                20f, 20f, white
+            )
+
+            var baseline = y + verticalPadding + textPaint.textSize
             for ((index, line) in lines.withIndex()) {
-                val blockWidth = minOf(textPaint.measureText(line) + 44f, RIGHT - LEFT)
-                canvas.drawRoundRect(RectF(LEFT, y, LEFT + blockWidth, y + blockHeight), 20f, 20f, white)
-                canvas.drawText(line, LEFT + 22f, y + 39f, textPaint)
-                y += blockHeight + if (index == lines.lastIndex) GAP else SAME_TEXT_GAP
-                if (y > H - 80f) return
+                canvas.drawText(line, LEFT + horizontalPadding, baseline, textPaint)
+                if (index != lines.lastIndex) baseline += lineHeight + SAME_TEXT_GAP
             }
+
+            // Keep the normal spacing between separate subheadings exactly as before.
+            y += blockHeight + GAP
+            if (y > H - 80f) return
         }
     }
 
