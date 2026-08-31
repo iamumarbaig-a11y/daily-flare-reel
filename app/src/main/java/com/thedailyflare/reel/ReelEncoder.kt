@@ -139,12 +139,17 @@ class ReelEncoder {
         try {
             val firstTrack = findVideoTrack(first)
             val secondTrack = findVideoTrack(second)
+            val firstFormat = first.getTrackFormat(firstTrack)
+            val secondFormat = second.getTrackFormat(secondTrack)
+            require(firstFormat.getInteger(MediaFormat.KEY_WIDTH) == secondFormat.getInteger(MediaFormat.KEY_WIDTH)) { "Main and CTA video widths differ" }
+            require(firstFormat.getInteger(MediaFormat.KEY_HEIGHT) == secondFormat.getInteger(MediaFormat.KEY_HEIGHT)) { "Main and CTA video heights differ" }
+            require(firstFormat.getString(MediaFormat.KEY_MIME) == secondFormat.getString(MediaFormat.KEY_MIME)) { "Main and CTA video codecs differ" }
+
             first.selectTrack(firstTrack)
             second.selectTrack(secondTrack)
-            val format = first.getTrackFormat(firstTrack)
             val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             muxer.setOrientationHint(0)
-            val outTrack = muxer.addTrack(format)
+            val outTrack = muxer.addTrack(firstFormat)
             muxer.start()
             try {
                 copySamples(first, muxer, outTrack, 0L)
@@ -172,10 +177,17 @@ class ReelEncoder {
             buffer.clear()
             val size = extractor.readSampleData(buffer, 0)
             if (size < 0) break
+            if (size == 0 && (extractor.sampleFlags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                extractor.advance()
+                continue
+            }
             info.offset = 0
             info.size = size
             info.presentationTimeUs = extractor.sampleTime + offsetUs
-            info.flags = extractor.sampleFlags
+            // EOS belongs to each temporary segment. It must NOT terminate the
+            // final joined track at 15 seconds, otherwise the CTA samples after it
+            // are ignored by players.
+            info.flags = extractor.sampleFlags and MediaCodec.BUFFER_FLAG_END_OF_STREAM.inv()
             muxer.writeSampleData(outTrack, buffer, info)
             extractor.advance()
         }
