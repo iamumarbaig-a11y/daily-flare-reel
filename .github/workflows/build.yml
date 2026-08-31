@@ -17,14 +17,17 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+      - name: Verify Gradle version
+        run: gradle --version
       - name: Restore extracted APK background asset
         run: |
           mkdir -p app/src/main/res/drawable-nodpi
           base64 -d baseline/daily_flare_background.jpg.b64 > app/src/main/res/drawable-nodpi/daily_flare_background.jpg
       - name: Build debug APK
-        run: gradle assembleDebug --stacktrace
+        run: gradle --version && gradle assembleDebug --stacktrace
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: daily-flare-reel-debug
+          name: daily-flare-reel-debug-v30
           path: app/build/outputs/apk/debug/*.apk
