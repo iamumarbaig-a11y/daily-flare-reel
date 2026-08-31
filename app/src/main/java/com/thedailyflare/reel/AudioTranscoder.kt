@@ -23,12 +23,7 @@ class AudioTranscoder(private val context: Context) {
             extractor.selectTrack(track)
             val inputFormat = extractor.getTrackFormat(track)
             val mime = inputFormat.getString(MediaFormat.KEY_MIME) ?: return false
-
-            // Already AAC: copy it into an MP4 container while limiting it to 18 seconds.
-            if (mime == MediaFormat.MIMETYPE_AUDIO_AAC) {
-                return copyAac(extractor, inputFormat, output)
-            }
-
+            if (mime == MediaFormat.MIMETYPE_AUDIO_AAC) return copyAac(extractor, inputFormat, output)
             return transcodeWithCodecs(extractor, inputFormat, mime, output)
         } finally {
             try { extractor.release() } catch (_: Exception) { }
@@ -56,12 +51,7 @@ class AudioTranscoder(private val context: Context) {
         } finally { muxer.release() }
     }
 
-    private fun transcodeWithCodecs(
-        extractor: MediaExtractor,
-        inputFormat: MediaFormat,
-        mime: String,
-        output: File
-    ): Boolean {
+    private fun transcodeWithCodecs(extractor: MediaExtractor, inputFormat: MediaFormat, mime: String, output: File): Boolean {
         val decoder = MediaCodec.createDecoderByType(mime)
         val sampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
         val channels = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
@@ -86,7 +76,6 @@ class AudioTranscoder(private val context: Context) {
 
         try {
             while (!encoderEos) {
-                // Feed compressed source samples to decoder.
                 if (!extractorEos) {
                     val inIndex = decoder.dequeueInputBuffer(10_000)
                     if (inIndex >= 0) {
@@ -109,11 +98,8 @@ class AudioTranscoder(private val context: Context) {
                     }
                 }
 
-                // Move decoded PCM into AAC encoder.
                 val decOut = decoder.dequeueOutputBuffer(decoderInfo, 10_000)
-                if (decOut == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    // Decoder output format is normally the same sample rate/channel count.
-                } else if (decOut >= 0) {
+                if (decOut >= 0) {
                     val out = decoder.getOutputBuffer(decOut)
                     val encoderIn = encoder.dequeueInputBuffer(10_000)
                     if (encoderIn >= 0) {
@@ -124,19 +110,13 @@ class AudioTranscoder(private val context: Context) {
                             out.limit(decoderInfo.offset + decoderInfo.size)
                             encInput.put(out)
                         }
-                        val flags = if ((decoderInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0)
-                            MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0
+                        val flags = if ((decoderInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0
                         encoder.queueInputBuffer(encoderIn, 0, encInput.position(), decoderInfo.presentationTimeUs, flags)
                         decoderEos = flags != 0
                     }
                     decoder.releaseOutputBuffer(decOut, false)
                 }
 
-                if (decoderEos && !encoderEos) {
-                    // The EOS flag is already queued above; keep draining encoder.
-                }
-
-                // Drain AAC encoder.
                 while (true) {
                     val encOut = encoder.dequeueOutputBuffer(encoderInfo, 0)
                     when {
@@ -162,7 +142,6 @@ class AudioTranscoder(private val context: Context) {
                 }
             }
             if (muxerStarted) muxer.stop()
-            true
         } finally {
             muxer.release()
             try { decoder.stop() } catch (_: Exception) { }
@@ -170,5 +149,6 @@ class AudioTranscoder(private val context: Context) {
             try { encoder.stop() } catch (_: Exception) { }
             try { encoder.release() } catch (_: Exception) { }
         }
+        return true
     }
 }
