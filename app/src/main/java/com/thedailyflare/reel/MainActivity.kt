@@ -2,7 +2,6 @@ package com.thedailyflare.reel
 
 import android.app.Activity
 import android.content.Intent
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
@@ -40,16 +39,16 @@ class MainActivity : Activity() {
             text = "Choose music"
             setOnClickListener { pickAudio() }
         }
-        val text = EditText(this).apply {
+        val headlineInput = EditText(this).apply {
             hint = "Headline"
             setSingleLine(false)
         }
         val add = Button(this).apply {
             text = "Add headline"
             setOnClickListener {
-                if (text.text.isNotBlank()) {
-                    headlines.add(text.text.toString())
-                    text.text.clear()
+                if (headlineInput.text.isNotBlank()) {
+                    headlines.add(headlineInput.text.toString())
+                    headlineInput.text.clear()
                     preview.headlines = headlines.toList()
                     preview.invalidate()
                 }
@@ -59,7 +58,7 @@ class MainActivity : Activity() {
             text = "EXPORT 18-SECOND REEL"
             setOnClickListener { exportReel() }
         }
-        listOf(image, music, text, add, export).forEach {
+        listOf(image, music, headlineInput, add, export).forEach {
             root.addView(it, LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
         setContentView(root)
