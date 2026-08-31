@@ -1,5 +1,9 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 
+dependencies {
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
+}
+
 android {
     namespace = "com.thedailyflare.reel"
     compileSdk = 35
@@ -7,8 +11,8 @@ android {
         applicationId = "com.thedailyflare.reel"
         minSdk = 26
         targetSdk = 35
-        versionCode = 21
-        versionName = "21"
+        versionCode = 22
+        versionName = "22"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
