@@ -11,8 +11,8 @@ import android.graphics.Typeface
 object ReelLayout {
     private const val W = 1080f
     private const val H = 1920f
-    private const val LEFT = 108f
-    private const val TOP = 288f
+    private const val LEFT = 108f       // 10% from left
+    private const val TOP = 288f        // 15% from top
     private const val RIGHT = 972f
     private const val GAP = 18f
 
@@ -24,7 +24,7 @@ object ReelLayout {
         canvas.save()
         canvas.scale(width / W, height / H)
         if (showCta && ctaBitmap != null) {
-            // The CTA image is complete. Absolutely no generated text is drawn over it.
+            // CTA is a complete user-supplied image. Draw absolutely nothing over it.
             canvas.drawBitmap(ctaBitmap, null, RectF(0f, 0f, W, H), null)
         } else {
             drawNews(canvas, title, headlines)
@@ -38,26 +38,33 @@ object ReelLayout {
             textSize = 72f
             typeface = Typeface.create("sans", Typeface.BOLD)
         }
+        val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
 
-        // Main heading: black text only. No background rectangle.
-        var y = TOP + titlePaint.textSize
-        for (line in wrap(title.ifBlank { "Main heading" }, titlePaint, RIGHT - LEFT)) {
-            canvas.drawText(line, LEFT, y, titlePaint)
-            y += 82f
+        // Main heading: large black bold text with a fitted white rounded background.
+        // The background follows the actual rendered line width; it is never a fixed block.
+        var y = TOP
+        val titleLines = wrap(title.ifBlank { "Main heading" }, titlePaint, RIGHT - LEFT - 44f)
+        for (line in titleLines) {
+            val blockWidth = minOf(titlePaint.measureText(line) + 44f, RIGHT - LEFT)
+            val blockHeight = titlePaint.textSize + 28f
+            canvas.drawRoundRect(
+                RectF(LEFT, y, LEFT + blockWidth, y + blockHeight),
+                20f, 20f, white
+            )
+            canvas.drawText(line, LEFT + 22f, y + titlePaint.textSize + 2f, titlePaint)
+            y += blockHeight + GAP
         }
-        y += 36f
+        y += 18f
 
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
             textSize = 34f
             typeface = Typeface.create("sans", Typeface.NORMAL)
         }
-        val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
         val maxTextWidth = RIGHT - LEFT - 44f
         val lineHeight = 43f
 
-        // Every WRAPPED LINE is its own fitted white rounded block.
-        // The block width follows the rendered text width instead of filling the screen.
+        // Every WRAPPED LINE gets its own fitted white rounded block.
         for (headline in headlines.take(7)) {
             if (headline.isBlank()) continue
             for (line in wrap(headline, textPaint, maxTextWidth)) {
