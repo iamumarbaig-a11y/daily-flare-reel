@@ -39,12 +39,7 @@ class ReelEncoder {
                 val showCta = frame >= 15 * fps
                 val canvas: Canvas = surface.lockCanvas(null)
                 try {
-                    canvas.drawBitmap(
-                        if (showCta) ctaBitmap else background,
-                        null,
-                        android.graphics.Rect(0, 0, width, height),
-                        null
-                    )
+                    ReelLayout.drawCover(canvas, if (showCta) ctaBitmap else background, width, height)
                     if (!showCta) ReelLayout.draw(canvas, title, headlines, width, height, null, false)
                 } finally {
                     surface.unlockCanvasAndPost(canvas)
@@ -58,6 +53,7 @@ class ReelEncoder {
                         result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             if (started) throw IllegalStateException("Output format changed twice")
                             track = muxer.addTrack(codec.outputFormat)
+                            muxer.setOrientationHint(0)
                             muxer.start()
                             started = true
                         }
@@ -75,7 +71,6 @@ class ReelEncoder {
                 drain?.onFrame(frame + 1)
             }
 
-            // Signal EOS before releasing the input surface.
             codec.signalEndOfInputStream()
             surface.release()
             surface = null
@@ -88,6 +83,7 @@ class ReelEncoder {
                     result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                         if (started) throw IllegalStateException("Output format changed twice")
                         track = muxer.addTrack(codec.outputFormat)
+                        muxer.setOrientationHint(0)
                         muxer.start()
                         started = true
                     }
