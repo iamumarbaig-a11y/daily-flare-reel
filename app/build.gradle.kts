@@ -13,8 +13,8 @@ android {
         applicationId = "com.thedailyflare.reel"
         minSdk = 26
         targetSdk = 35
-        versionCode = 32
-        versionName = "32"
+        versionCode = 33
+        versionName = "33"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
