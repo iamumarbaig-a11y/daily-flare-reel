@@ -16,6 +16,7 @@ object ReelLayout {
     private const val TOP = 288f
     private const val RIGHT = 972f
     private const val GAP = 18f
+    private const val SAME_TEXT_GAP = -0.1f
 
     fun drawCover(canvas: Canvas, bitmap: Bitmap, width: Int, height: Int) {
         if (width <= 0 || height <= 0 || bitmap.width <= 0 || bitmap.height <= 0) return
@@ -40,11 +41,8 @@ object ReelLayout {
              ctaBitmap: Bitmap?, showCta: Boolean) {
         canvas.save()
         canvas.scale(width / W, height / H)
-        if (showCta && ctaBitmap != null) {
-            drawCover(canvas, ctaBitmap, W.toInt(), H.toInt())
-        } else {
-            drawNews(canvas, title, headlines)
-        }
+        if (showCta && ctaBitmap != null) drawCover(canvas, ctaBitmap, W.toInt(), H.toInt())
+        else drawNews(canvas, title, headlines)
         canvas.restore()
     }
 
@@ -55,22 +53,17 @@ object ReelLayout {
             typeface = Typeface.create("sans", Typeface.BOLD)
         }
         val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-
         var y = TOP
         val titleLines = wrap(title.ifBlank { "Main heading" }, titlePaint, RIGHT - LEFT - 44f)
         val titleLineHeight = titlePaint.textSize + 8f
         val titleBlockHeight = titleLineHeight + 28f
-        for (line in titleLines) {
+        for ((index, line) in titleLines.withIndex()) {
             val blockWidth = minOf(titlePaint.measureText(line) + 44f, RIGHT - LEFT)
-            canvas.drawRoundRect(
-                RectF(LEFT, y, LEFT + blockWidth, y + titleBlockHeight),
-                20f, 20f, white
-            )
+            canvas.drawRoundRect(RectF(LEFT, y, LEFT + blockWidth, y + titleBlockHeight), 20f, 20f, white)
             canvas.drawText(line, LEFT + 22f, y + titlePaint.textSize + 2f, titlePaint)
-            y += titleBlockHeight + GAP
+            y += titleBlockHeight + if (index == titleLines.lastIndex) GAP else SAME_TEXT_GAP
         }
         y += 18f
-
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
             textSize = 34f
@@ -79,17 +72,14 @@ object ReelLayout {
         val maxTextWidth = RIGHT - LEFT - 44f
         val lineHeight = 43f
         val blockHeight = lineHeight + 24f
-
         for (headline in headlines.take(7)) {
             if (headline.isBlank()) continue
-            for (line in wrap(headline, textPaint, maxTextWidth)) {
+            val lines = wrap(headline, textPaint, maxTextWidth)
+            for ((index, line) in lines.withIndex()) {
                 val blockWidth = minOf(textPaint.measureText(line) + 44f, RIGHT - LEFT)
-                canvas.drawRoundRect(
-                    RectF(LEFT, y, LEFT + blockWidth, y + blockHeight),
-                    20f, 20f, white
-                )
+                canvas.drawRoundRect(RectF(LEFT, y, LEFT + blockWidth, y + blockHeight), 20f, 20f, white)
                 canvas.drawText(line, LEFT + 22f, y + 39f, textPaint)
-                y += blockHeight + GAP
+                y += blockHeight + if (index == lines.lastIndex) GAP else SAME_TEXT_GAP
                 if (y > H - 80f) return
             }
         }
