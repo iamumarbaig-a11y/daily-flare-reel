@@ -8,13 +8,13 @@ dependencies {
 
 android {
     namespace = "com.thedailyflare.reel"
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
         applicationId = "com.thedailyflare.reel"
         minSdk = 26
         targetSdk = 35
-        versionCode = 28
-        versionName = "28"
+        versionCode = 29
+        versionName = "29"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
