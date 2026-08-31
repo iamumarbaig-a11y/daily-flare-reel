@@ -1,12 +1,16 @@
 package com.thedailyflare.reel
 
 import android.app.Activity
+import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
@@ -16,6 +20,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
+import java.io.FileOutputStream
 import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
@@ -57,7 +62,7 @@ class MainActivity : Activity() {
         section(root, "3. MUSIC — ALL 18 SECONDS")
         root.addView(button("CHOOSE MUSIC") { pickAudio() }, lp())
         musicLabel = label("No music selected"); root.addView(musicLabel, lp())
-        root.addView(TextView(this).apply { text = "The export is exactly 18 seconds: 15 seconds of the main image with the heading and 7 subheadings, followed by 3 seconds of the CTA image."; textSize = 14f; setPadding(0, 12, 0, 12) }, lp())
+        root.addView(TextView(this).apply { text = "The export is exactly 18 seconds: 15 seconds of the main image with the heading and 7 subheadings, followed by 3 seconds of the CTA image. The finished video is saved to Movies/Daily Flare Reel."; textSize = 14f; setPadding(0, 12, 0, 12) }, lp())
         root.addView(button("EXPORT 18-SECOND REEL") { exportReel() }, lp())
         setContentView(scroll)
     }
@@ -77,16 +82,16 @@ class MainActivity : Activity() {
         val uri = data.data!!
         try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
         when (requestCode) {
-            100 -> { mainBitmap = decode(uri); preview.backgroundBitmap = mainBitmap; mainImageLabel.text = "Main image selected"; refreshPreview() }
-            101 -> { ctaBitmap = decode(uri); preview.ctaBitmap = ctaBitmap; ctaImageLabel.text = "CTA image selected" }
+            100 -> { mainBitmap = decodePortrait(uri); preview.backgroundBitmap = mainBitmap; mainImageLabel.text = "Main image selected"; refreshPreview() }
+            101 -> { ctaBitmap = decodePortrait(uri); preview.ctaBitmap = ctaBitmap; ctaImageLabel.text = "CTA image selected"; preview.invalidate() }
             102 -> { musicUri = uri; musicLabel.text = "Music selected" }
         }
     }
 
-    /** Decode the photo and apply EXIF orientation so portrait phone photos stay portrait. */
-    private fun decode(uri: Uri): Bitmap? {
+    /** Decode EXIF orientation first, then center-crop to an exact 9:16 frame. */
+    private fun decodePortrait(uri: Uri): Bitmap? {
         return try {
-            val bitmap = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } ?: return null
+            val decoded = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } ?: return null
             val orientation = contentResolver.openInputStream(uri)?.use {
                 ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
             } ?: ExifInterface.ORIENTATION_NORMAL
@@ -99,12 +104,34 @@ class MainActivity : Activity() {
                 ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
                 ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(-90f); matrix.postScale(-1f, 1f) }
                 ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
-                else -> return bitmap
             }
-            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true).also {
-                if (it !== bitmap) bitmap.recycle()
-            }
+            val oriented = if (orientation == ExifInterface.ORIENTATION_NORMAL) decoded
+            else Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also { if (it !== decoded) decoded.recycle() }
+            centerCropPortrait(oriented)
         } catch (_: Exception) { null }
+    }
+
+    private fun centerCropPortrait(source: Bitmap): Bitmap {
+        val targetW = 1080
+        val targetH = 1920
+        val targetRatio = targetW.toFloat() / targetH
+        val sourceRatio = source.width.toFloat() / source.height
+        val cropW: Int
+        val cropH: Int
+        if (sourceRatio > targetRatio) {
+            cropH = source.height
+            cropW = (cropH * targetRatio).toInt()
+        } else {
+            cropW = source.width
+            cropH = (cropW / targetRatio).toInt()
+        }
+        val left = (source.width - cropW) / 2
+        val top = (source.height - cropH) / 2
+        val cropped = Bitmap.createBitmap(source, left, top, cropW, cropH)
+        val scaled = Bitmap.createScaledBitmap(cropped, targetW, targetH, true)
+        if (cropped !== source) cropped.recycle()
+        if (scaled !== source) source.recycle()
+        return scaled
     }
 
     private fun refreshPreview() { preview.title = titleInput.text.toString(); preview.headlines = headlineInputs.map { it.text.toString() }; preview.invalidate() }
@@ -119,17 +146,57 @@ class MainActivity : Activity() {
         thread(name = "daily-flare-export") {
             try {
                 val video = File(cacheDir, "daily_flare_video.mp4")
-                val output = File(getExternalFilesDir(null), "daily_flare_reel_18s.mp4")
+                val output = File(cacheDir, "daily_flare_reel_18s.mp4")
                 video.delete(); output.delete()
                 ReelEncoder().encode(bg, cta, title, headlines, video)
                 val result = FinalExporter(this).export(video, music, output)
-                runOnUiThread {
-                    toast(if (result.success) "Export complete: 18 seconds" else "Export failed: ${result.error ?: "unknown error"}")
+                if (result.success) {
+                    val saved = saveToGallery(output)
+                    runOnUiThread {
+                        toast(if (saved) "Export complete: saved to Movies/Daily Flare Reel" else "Export completed but could not save to gallery")
+                    }
+                } else {
+                    runOnUiThread { toast("Export failed: ${result.error ?: "unknown error"}") }
                 }
             } catch (e: Exception) {
                 runOnUiThread { toast("Export failed: ${e.message ?: "unknown error"}") }
             }
         }
     }
+
+    /** Publish the completed MP4 into Android's shared Movies collection so Gallery/File Manager can see it. */
+    private fun saveToGallery(source: File): Boolean {
+        if (!source.exists() || source.length() == 0L) return false
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, "daily_flare_reel_${System.currentTimeMillis()}.mp4")
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/Daily Flare Reel")
+                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                }
+                val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+                try {
+                    contentResolver.openOutputStream(uri)?.use { out ->
+                        source.inputStream().use { input -> input.copyTo(out) }
+                    } ?: return false
+                    values.clear()
+                    values.put(MediaStore.Video.Media.IS_PENDING, 0)
+                    contentResolver.update(uri, values, null, null) > 0
+                } catch (e: Exception) {
+                    contentResolver.delete(uri, null, null)
+                    false
+                }
+            } else {
+                val movies = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+                val dir = File(movies, "Daily Flare Reel").apply { mkdirs() }
+                val destination = File(dir, "daily_flare_reel_${System.currentTimeMillis()}.mp4")
+                source.copyTo(destination, overwrite = true)
+                sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(destination)))
+                destination.exists() && destination.length() > 0L
+            }
+        } catch (_: Exception) { false }
+    }
+
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 }
