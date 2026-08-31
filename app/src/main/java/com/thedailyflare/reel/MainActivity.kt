@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
@@ -14,6 +15,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.exifinterface.media.ExifInterface
 import java.io.File
 import kotlin.concurrent.thread
 
@@ -34,61 +36,41 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 24, 32, 32) }
         scroll.addView(root)
-
         root.addView(TextView(this).apply { text = "Daily Flare Reel"; textSize = 30f; setTextColor(0xFF172A3A.toInt()) }, lp())
-        root.addView(TextView(this).apply {
-            text = "18 seconds • 9:16 • 1080×1920\n15s main image + text • 3s CTA image • music for all 18s"
-            textSize = 17f; setPadding(0, 4, 0, 18)
-        }, lp())
-
+        root.addView(TextView(this).apply { text = "18 seconds • 9:16 • 1080×1920\n15s main image + text • 3s CTA image • music for all 18s"; textSize = 17f; setPadding(0, 4, 0, 18) }, lp())
         preview = ReelPreviewView(this).apply { setBackgroundColor(0xFFEFEFEF.toInt()) }
         root.addView(preview, LinearLayout.LayoutParams(-1, 520))
-
         section(root, "1. MAIN 15-SECOND IMAGE")
         root.addView(button("CHOOSE MAIN IMAGE") { pickImage(100) }, lp())
         mainImageLabel = label("No main image selected"); root.addView(mainImageLabel, lp())
-
         section(root, "MAIN HEADING")
         titleInput = edit("Main heading", 2); root.addView(titleInput, lp())
         titleInput.setOnFocusChangeListener { _, _ -> refreshPreview() }
-
         for (i in 1..7) {
             section(root, "SUBHEADING $i")
             val input = edit("Subheading $i", 2)
             headlineInputs.add(input); root.addView(input, lp())
             input.setOnFocusChangeListener { _, _ -> refreshPreview() }
         }
-
         section(root, "2. 3-SECOND CTA IMAGE")
         root.addView(button("CHOOSE CTA IMAGE") { pickImage(101) }, lp())
         ctaImageLabel = label("No CTA image selected"); root.addView(ctaImageLabel, lp())
-
         section(root, "3. MUSIC — ALL 18 SECONDS")
         root.addView(button("CHOOSE MUSIC") { pickAudio() }, lp())
         musicLabel = label("No music selected"); root.addView(musicLabel, lp())
-
-        root.addView(TextView(this).apply {
-            text = "The export is exactly 18 seconds: 15 seconds of the main image with the heading and 7 subheadings, followed by 3 seconds of the CTA image."
-            textSize = 14f; setPadding(0, 12, 0, 12)
-        }, lp())
+        root.addView(TextView(this).apply { text = "The export is exactly 18 seconds: 15 seconds of the main image with the heading and 7 subheadings, followed by 3 seconds of the CTA image."; textSize = 14f; setPadding(0, 12, 0, 12) }, lp())
         root.addView(button("EXPORT 18-SECOND REEL") { exportReel() }, lp())
         setContentView(scroll)
     }
 
-    private fun section(root: LinearLayout, value: String) { root.addView(TextView(this).apply {
-        text = value; textSize = 18f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 16, 0, 6)
-    }, lp()) }
+    private fun section(root: LinearLayout, value: String) { root.addView(TextView(this).apply { text = value; textSize = 18f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 16, 0, 6) }, lp()) }
     private fun edit(h: String, lines: Int) = EditText(this).apply { hint = h; textSize = 18f; minLines = lines; setSingleLine(false) }
     private fun button(t: String, action: () -> Unit) = Button(this).apply { text = t; textSize = 16f; setOnClickListener { action() } }
     private fun label(t: String) = TextView(this).apply { text = t; textSize = 16f; setPadding(0, 4, 0, 4) }
     private fun lp() = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
 
-    private fun pickImage(code: Int) { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-        type = "image/*"; addCategory(Intent.CATEGORY_OPENABLE); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-    }, code) }
-    private fun pickAudio() { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-        type = "audio/*"; addCategory(Intent.CATEGORY_OPENABLE); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-    }, 102) }
+    private fun pickImage(code: Int) { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "image/*"; addCategory(Intent.CATEGORY_OPENABLE); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) }, code) }
+    private fun pickAudio() { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "audio/*"; addCategory(Intent.CATEGORY_OPENABLE); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) }, 102) }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -101,7 +83,25 @@ class MainActivity : Activity() {
             102 -> { musicUri = uri; musicLabel.text = "Music selected" }
         }
     }
-    private fun decode(uri: Uri): Bitmap? = try { contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } } catch (_: Exception) { null }
+
+    /** Decode the photo and apply its EXIF orientation so portrait phone photos stay portrait. */
+    private fun decode(uri: Uri): Bitmap? = try {
+        val bitmap = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } ?: return null
+        val orientation = contentResolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) } ?: ExifInterface.ORIENTATION_NORMAL
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.setScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.setRotate(90f); matrix.postScale(-1f, 1f) }
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
+            ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(-90f); matrix.postScale(-1f, 1f) }
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
+            else -> return bitmap
+        }
+        Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true).also { if (it !== bitmap) bitmap.recycle() }
+    } catch (_: Exception) { null }
+
     private fun refreshPreview() { preview.title = titleInput.text.toString(); preview.headlines = headlineInputs.map { it.text.toString() }; preview.invalidate() }
 
     private fun exportReel() {
