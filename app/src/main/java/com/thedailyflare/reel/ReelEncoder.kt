@@ -7,6 +7,8 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.os.Handler
+import android.os.Looper
 import android.view.Surface
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
@@ -122,18 +124,43 @@ class ReelEncoder(private val context: Context) {
 
     private fun composeMainAndCta(mainSegment: File, ctaImage: File, output: File) {
         val main = EditedMediaItem.Builder(MediaItem.fromUri(mainSegment.toURI().toString())).build()
-        val ctaMedia = MediaItem.Builder().setUri(ctaImage.toURI().toString()).setImageDurationMs(3_000).build()
+        val ctaMedia = MediaItem.Builder()
+            .setUri(ctaImage.toURI().toString())
+            .setImageDurationMs(3_000)
+            .build()
         val cta = EditedMediaItem.Builder(ctaMedia).setFrameRate(30).build()
         val videoSequence = EditedMediaItemSequence.withVideoFrom(listOf(main, cta))
         val composition = Composition.Builder(videoSequence).build()
         val latch = CountDownLatch(1)
         val error = AtomicReference<Throwable?>(null)
-        val transformer = Transformer.Builder(context).addListener(object : Transformer.Listener {
-            override fun onCompleted(composition: Composition, result: ExportResult) { latch.countDown() }
-            override fun onError(composition: Composition, result: ExportResult, exportException: ExportException) { error.set(exportException); latch.countDown() }
-        }).build()
-        transformer.start(composition, output.absolutePath)
-        if (!latch.await(120, TimeUnit.SECONDS)) throw IllegalStateException("CTA composition timed out")
+        val mainHandler = Handler(Looper.getMainLooper())
+        val transformerRef = AtomicReference<Transformer?>(null)
+
+        mainHandler.post {
+            try {
+                val transformer = Transformer.Builder(context.applicationContext)
+                    .addListener(object : Transformer.Listener {
+                        override fun onCompleted(composition: Composition, result: ExportResult) {
+                            latch.countDown()
+                        }
+
+                        override fun onError(composition: Composition, result: ExportResult, exportException: ExportException) {
+                            error.set(exportException)
+                            latch.countDown()
+                        }
+                    })
+                    .build()
+                transformerRef.set(transformer)
+                transformer.start(composition, output.absolutePath)
+            } catch (t: Throwable) {
+                error.set(t)
+                latch.countDown()
+            }
+        }
+
+        if (!latch.await(180, TimeUnit.SECONDS)) {
+            throw IllegalStateException("CTA composition timed out")
+        }
         error.get()?.let { throw it }
     }
 }
