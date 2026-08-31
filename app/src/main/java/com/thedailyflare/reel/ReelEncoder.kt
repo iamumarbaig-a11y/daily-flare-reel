@@ -46,6 +46,8 @@ class ReelEncoder(private val context: Context) {
         var track = -1
         var started = false
         val info = MediaCodec.BufferInfo()
+        val frameIntervalNs = 1_000_000_000L / fps
+        val renderStartNs = System.nanoTime()
 
         try {
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
@@ -53,20 +55,29 @@ class ReelEncoder(private val context: Context) {
             codec.start()
 
             for (frame in 0 until totalFrames) {
+                // Pace against an absolute timeline rather than sleeping 33ms every loop.
+                // This prevents encoder/dequeue latency from accumulating and pushing the
+                // 15-second -> 3-second CTA transition toward the end of the 18s video.
+                val targetNs = renderStartNs + frame * frameIntervalNs
+                val remainingNs = targetNs - System.nanoTime()
+                if (remainingNs > 0L) {
+                    val millis = remainingNs / 1_000_000L
+                    val nanos = (remainingNs % 1_000_000L).toInt()
+                    if (millis > 0L || nanos > 0) Thread.sleep(millis, nanos)
+                }
+
                 val canvas: Canvas = surface.lockCanvas(null)
                 try {
                     if (frame < mainFrames) {
                         ReelLayout.drawCover(canvas, background, width, height)
                         ReelLayout.draw(canvas, title, headlines, width, height, null, false)
                     } else {
-                        // CTA occupies the entire final 3 seconds. No news text is drawn here.
+                        // Frames 450..539 are the complete final 3 seconds.
                         ReelLayout.drawCover(canvas, ctaBitmap, width, height)
                     }
                 } finally {
                     surface.unlockCanvasAndPost(canvas)
                 }
-
-                Thread.sleep(1000L / fps)
 
                 while (true) {
                     val result = codec.dequeueOutputBuffer(info, 0)
