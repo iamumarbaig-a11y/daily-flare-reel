@@ -14,9 +14,17 @@ object ReelLayout {
     private const val H = 1920f
     private const val LEFT = 108f
     private const val TOP = 288f
-    private const val RIGHT = 972f
+    private const val RIGHT = 900f
     private const val GAP = 18f
     private const val SAME_TEXT_GAP = -0.1f
+    private const val TITLE_SIZE = 60f
+    private const val TITLE_PAD_X = 18f
+    private const val TITLE_PAD_Y = 12f
+    private const val TITLE_RADIUS = 14f
+    private const val TEXT_SIZE = 29f
+    private const val TEXT_PAD_X = 14f
+    private const val TEXT_PAD_Y = 8f
+    private const val TEXT_RADIUS = 12f
 
     fun drawCover(canvas: Canvas, bitmap: Bitmap, width: Int, height: Int) {
         if (width <= 0 || height <= 0 || bitmap.width <= 0 || bitmap.height <= 0) return
@@ -47,54 +55,74 @@ object ReelLayout {
     }
 
     private fun drawNews(canvas: Canvas, title: String, headlines: List<String>) {
+        // Compact Instagram/Reels-style typography: bold but deliberately smaller,
+        // with tight padding so the photograph remains the dominant visual.
         val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
-            textSize = 72f
+            textSize = TITLE_SIZE
             typeface = Typeface.create("sans", Typeface.BOLD)
         }
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
-            textSize = 34f
+            textSize = TEXT_SIZE
             typeface = Typeface.create("sans", Typeface.BOLD)
         }
         val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
 
         var y = TOP
 
-        // Main heading: each wrapped line gets its own background whose width
-        // is exactly that rendered line's width plus padding.
-        val titleLines = wrap(title.ifBlank { "Main heading" }, titlePaint, RIGHT - LEFT - 44f)
-        val titleLineHeight = titlePaint.textSize + 8f
-        val titleBlockHeight = titleLineHeight + 28f
+        // Main heading: one compact white pill per wrapped line. Lines belonging
+        // to the same heading nearly touch; separate content keeps the normal GAP.
+        val titleMaxWidth = RIGHT - LEFT - (TITLE_PAD_X * 2f)
+        val titleLines = wrap(title.ifBlank { "Main heading" }, titlePaint, titleMaxWidth)
+        val titleLineHeight = titlePaint.textSize + 2f
+        val titleBlockHeight = titleLineHeight + TITLE_PAD_Y * 2f
         for ((index, line) in titleLines.withIndex()) {
-            val blockWidth = titlePaint.measureText(line) + 44f
-            canvas.drawRoundRect(RectF(LEFT, y, LEFT + blockWidth, y + titleBlockHeight), 20f, 20f, white)
-            canvas.drawText(line, LEFT + 22f, y + titlePaint.textSize + 2f, titlePaint)
+            val blockWidth = minOf(
+                titlePaint.measureText(line) + TITLE_PAD_X * 2f,
+                RIGHT - LEFT
+            )
+            canvas.drawRoundRect(
+                RectF(LEFT, y, LEFT + blockWidth, y + titleBlockHeight),
+                TITLE_RADIUS, TITLE_RADIUS, white
+            )
+            canvas.drawText(
+                line,
+                LEFT + TITLE_PAD_X,
+                y + TITLE_PAD_Y + titlePaint.textSize,
+                titlePaint
+            )
             y += titleBlockHeight + if (index == titleLines.lastIndex) GAP else SAME_TEXT_GAP
         }
 
-        // Keep heading -> subheading spacing unchanged.
+        // Keep the spacing between the heading and the first subheading unchanged.
         y += 18f
 
-        val maxTextWidth = RIGHT - LEFT - 44f
-        val lineHeight = textPaint.textSize + 9f
-        val blockHeight = lineHeight + 24f
+        val maxTextWidth = RIGHT - LEFT - TEXT_PAD_X * 2f
+        val lineHeight = textPaint.textSize + 3f
+        val blockHeight = lineHeight + TEXT_PAD_Y * 2f
 
-        // Subheadings use the EXACT same background behavior as the main heading:
-        // every wrapped line is an independent rounded white block, and each
-        // block is sized to that line's actual measured width. There is no fixed
-        // white-width container. Only the gap between lines of the same
-        // subheading is -0.1; separate subheadings retain GAP.
+        // Every wrapped subheading line gets its own compact, text-width-sized
+        // white pill, matching the heading treatment. Only lines of the SAME
+        // subheading use -0.1 spacing; separate subheadings retain GAP.
         for (headline in headlines.take(7)) {
             if (headline.isBlank()) continue
             val lines = wrap(headline, textPaint, maxTextWidth)
             for ((index, line) in lines.withIndex()) {
-                val blockWidth = textPaint.measureText(line) + 44f
+                val blockWidth = minOf(
+                    textPaint.measureText(line) + TEXT_PAD_X * 2f,
+                    RIGHT - LEFT
+                )
                 canvas.drawRoundRect(
                     RectF(LEFT, y, LEFT + blockWidth, y + blockHeight),
-                    20f, 20f, white
+                    TEXT_RADIUS, TEXT_RADIUS, white
                 )
-                canvas.drawText(line, LEFT + 22f, y + textPaint.textSize + 4f, textPaint)
+                canvas.drawText(
+                    line,
+                    LEFT + TEXT_PAD_X,
+                    y + TEXT_PAD_Y + textPaint.textSize,
+                    textPaint
+                )
                 y += blockHeight + if (index == lines.lastIndex) GAP else SAME_TEXT_GAP
                 if (y > H - 80f) return
             }
