@@ -38,7 +38,7 @@ class MainActivity : Activity() {
         root.addView(TextView(this).apply { text = "Daily Flare Reel"; textSize = 30f; setTextColor(0xFF172A3A.toInt()) }, lp())
         root.addView(TextView(this).apply { text = "18 seconds • 9:16 • 1080×1920\n15s main image + text • 3s CTA image • music for all 18s"; textSize = 17f; setPadding(0, 4, 0, 18) }, lp())
         preview = ReelPreviewView(this).apply { setBackgroundColor(0xFFEFEFEF.toInt()) }
-        root.addView(preview, LinearLayout.LayoutParams(-1, 520))
+        root.addView(preview, lp())
         section(root, "1. MAIN 15-SECOND IMAGE")
         root.addView(button("CHOOSE MAIN IMAGE") { pickImage(100) }, lp())
         mainImageLabel = label("No main image selected"); root.addView(mainImageLabel, lp())
@@ -78,7 +78,7 @@ class MainActivity : Activity() {
         try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
         when (requestCode) {
             100 -> { mainBitmap = decode(uri); preview.backgroundBitmap = mainBitmap; mainImageLabel.text = "Main image selected"; refreshPreview() }
-            101 -> { ctaBitmap = decode(uri); ctaImageLabel.text = "CTA image selected" }
+            101 -> { ctaBitmap = decode(uri); preview.ctaBitmap = ctaBitmap; ctaImageLabel.text = "CTA image selected" }
             102 -> { musicUri = uri; musicLabel.text = "Music selected" }
         }
     }
@@ -119,14 +119,16 @@ class MainActivity : Activity() {
         thread(name = "daily-flare-export") {
             try {
                 val video = File(cacheDir, "daily_flare_video.mp4")
-                val audio = File(cacheDir, "daily_flare_audio.mp4")
                 val output = File(getExternalFilesDir(null), "daily_flare_reel_18s.mp4")
-                video.delete(); audio.delete(); output.delete()
+                video.delete(); output.delete()
                 ReelEncoder().encode(bg, cta, title, headlines, video)
-                val audioReady = AudioTranscoder(this).transcode(music, audio)
-                val success = audioReady && AudioMuxer().mux(video, audio, output)
-                runOnUiThread { toast(if (success) "Export complete: 18 seconds" else "Export failed") }
-            } catch (e: Exception) { runOnUiThread { toast("Export failed: ${e.message ?: "unknown error"}") } }
+                val result = FinalExporter(this).export(video, music, output)
+                runOnUiThread {
+                    toast(if (result.success) "Export complete: 18 seconds" else "Export failed: ${result.error ?: "unknown error"}")
+                }
+            } catch (e: Exception) {
+                runOnUiThread { toast("Export failed: ${e.message ?: "unknown error"}") }
+            }
         }
     }
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
