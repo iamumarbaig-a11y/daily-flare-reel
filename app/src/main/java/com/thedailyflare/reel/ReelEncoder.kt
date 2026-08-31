@@ -2,7 +2,6 @@ package com.thedailyflare.reel
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Rect
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.media.MediaMuxer
@@ -26,10 +25,10 @@ class ReelEncoder {
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
         }
         val codec = MediaCodec.createEncoderByType("video/avc")
-        val surface: Surface
+        var surface: Surface? = null
         val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        var track = -1
         var started = false
-        var eos = false
         val info = MediaCodec.BufferInfo()
         try {
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
@@ -43,7 +42,7 @@ class ReelEncoder {
                     canvas.drawBitmap(
                         if (showCta) ctaBitmap else background,
                         null,
-                        Rect(0, 0, width, height),
+                        android.graphics.Rect(0, 0, width, height),
                         null
                     )
                     if (!showCta) ReelLayout.draw(canvas, title, headlines, width, height, null, false)
@@ -51,31 +50,53 @@ class ReelEncoder {
                     surface.unlockCanvasAndPost(canvas)
                 }
                 Thread.sleep(frameDelayMs)
-                drainCodec(codec, muxer, info) { trackStarted ->
-                    if (trackStarted) started = true
+
+                while (true) {
+                    val result = codec.dequeueOutputBuffer(info, 0)
+                    when {
+                        result == MediaCodec.INFO_TRY_AGAIN_LATER -> break
+                        result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                            if (started) throw IllegalStateException("Output format changed twice")
+                            track = muxer.addTrack(codec.outputFormat)
+                            muxer.start()
+                            started = true
+                        }
+                        result >= 0 -> {
+                            val encoded = codec.getOutputBuffer(result)
+                            if (encoded != null && info.size > 0 && started) {
+                                encoded.position(info.offset)
+                                encoded.limit(info.offset + info.size)
+                                muxer.writeSampleData(track, encoded, info)
+                            }
+                            codec.releaseOutputBuffer(result, false)
+                        }
+                    }
                 }
                 drain?.onFrame(frame + 1)
             }
 
-            // The input surface must remain alive until the EOS signal is queued.
+            // Signal EOS before releasing the input surface.
             codec.signalEndOfInputStream()
+            surface.release()
+            surface = null
+
+            var eos = false
             while (!eos) {
                 val result = codec.dequeueOutputBuffer(info, 10_000)
                 when {
                     result == MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
                     result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                         if (started) throw IllegalStateException("Output format changed twice")
-                        muxer.addTrack(codec.outputFormat).also {
-                            muxer.start()
-                            started = true
-                        }
+                        track = muxer.addTrack(codec.outputFormat)
+                        muxer.start()
+                        started = true
                     }
                     result >= 0 -> {
                         val encoded = codec.getOutputBuffer(result)
                         if (encoded != null && info.size > 0 && started) {
                             encoded.position(info.offset)
                             encoded.limit(info.offset + info.size)
-                            muxer.writeSampleData(findVideoTrack(muxer, codec, started), encoded, info)
+                            muxer.writeSampleData(track, encoded, info)
                         }
                         eos = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
                         codec.releaseOutputBuffer(result, false)
@@ -83,40 +104,11 @@ class ReelEncoder {
                 }
             }
         } finally {
-            try { surface.release() } catch (_: Exception) { }
+            try { surface?.release() } catch (_: Exception) { }
             if (started) try { muxer.stop() } catch (_: Exception) { }
             muxer.release()
             try { codec.stop() } catch (_: Exception) { }
             codec.release()
-        }
-    }
-
-    private fun findVideoTrack(muxer: MediaMuxer, codec: MediaCodec, started: Boolean): Int {
-        // The encoder has exactly one track; its output index is stable after muxer.start().
-        // MediaMuxer does not expose track lookup, so this is always the first added track.
-        return 0
-    }
-
-    private fun drainCodec(codec: MediaCodec, muxer: MediaMuxer, info: MediaCodec.BufferInfo, onStarted: (Boolean) -> Unit) {
-        while (true) {
-            val result = codec.dequeueOutputBuffer(info, 0)
-            when {
-                result == MediaCodec.INFO_TRY_AGAIN_LATER -> return
-                result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    muxer.addTrack(codec.outputFormat)
-                    muxer.start()
-                    onStarted(true)
-                }
-                result >= 0 -> {
-                    val encoded = codec.getOutputBuffer(result)
-                    if (encoded != null && info.size > 0) {
-                        encoded.position(info.offset)
-                        encoded.limit(info.offset + info.size)
-                        muxer.writeSampleData(0, encoded, info)
-                    }
-                    codec.releaseOutputBuffer(result, false)
-                }
-            }
         }
     }
 
