@@ -3,20 +3,57 @@ package com.thedailyflare.reel
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.media.MediaCodec
+import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.view.Surface
 import java.io.File
 
-/** Encodes 15 seconds of the main image/text followed by 3 seconds of the CTA image. */
+/** Encodes 15 seconds of news, then a separate 3-second CTA segment, and joins them. */
 class ReelEncoder {
     interface Drain { fun onFrame(frame: Int) {} }
 
     fun encode(background: Bitmap, ctaBitmap: Bitmap, title: String, headlines: List<String>, output: File, drain: Drain? = null) {
+        val mainSegment = File(output.parentFile, "daily_flare_main_15s.mp4")
+        val ctaSegment = File(output.parentFile, "daily_flare_cta_3s.mp4")
+        mainSegment.delete()
+        ctaSegment.delete()
+        output.delete()
+        try {
+            encodeSegment(background, title, headlines, mainSegment, 15, false, drain, 0)
+            if (!mainSegment.exists() || mainSegment.length() == 0L) {
+                throw IllegalStateException("15-second main segment produced no output")
+            }
+
+            encodeSegment(ctaBitmap, "", emptyList(), ctaSegment, 3, true, drain, 15 * 30)
+            if (!ctaSegment.exists() || ctaSegment.length() == 0L) {
+                throw IllegalStateException("3-second CTA segment produced no output")
+            }
+
+            joinVideoSegments(mainSegment, ctaSegment, output)
+            if (!output.exists() || output.length() == 0L) {
+                throw IllegalStateException("Joining main and CTA segments produced no output")
+            }
+        } finally {
+            mainSegment.delete()
+            ctaSegment.delete()
+        }
+    }
+
+    private fun encodeSegment(
+        bitmap: Bitmap,
+        title: String,
+        headlines: List<String>,
+        output: File,
+        seconds: Int,
+        ctaOnly: Boolean,
+        drain: Drain?,
+        frameOffset: Int
+    ) {
         val width = 1080
         val height = 1920
         val fps = 30
-        val totalFrames = 18 * fps
+        val totalFrames = seconds * fps
         val frameDelayMs = 1000L / fps
         val format = MediaFormat.createVideoFormat("video/avc", width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, COLOR_FORMAT_SURFACE)
@@ -36,45 +73,23 @@ class ReelEncoder {
             codec.start()
 
             for (frame in 0 until totalFrames) {
-                val showCta = frame >= 15 * fps
                 val canvas: Canvas = surface.lockCanvas(null)
                 try {
-                    ReelLayout.drawCover(canvas, if (showCta) ctaBitmap else background, width, height)
-                    if (!showCta) ReelLayout.draw(canvas, title, headlines, width, height, null, false)
+                    ReelLayout.drawCover(canvas, bitmap, width, height)
+                    if (!ctaOnly) {
+                        ReelLayout.draw(canvas, title, headlines, width, height, null, false)
+                    }
                 } finally {
                     surface.unlockCanvasAndPost(canvas)
                 }
                 Thread.sleep(frameDelayMs)
-
-                while (true) {
-                    val result = codec.dequeueOutputBuffer(info, 0)
-                    when {
-                        result == MediaCodec.INFO_TRY_AGAIN_LATER -> break
-                        result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                            if (started) throw IllegalStateException("Output format changed twice")
-                            track = muxer.addTrack(codec.outputFormat)
-                            muxer.setOrientationHint(0)
-                            muxer.start()
-                            started = true
-                        }
-                        result >= 0 -> {
-                            val encoded = codec.getOutputBuffer(result)
-                            if (encoded != null && info.size > 0 && started) {
-                                encoded.position(info.offset)
-                                encoded.limit(info.offset + info.size)
-                                muxer.writeSampleData(track, encoded, info)
-                            }
-                            codec.releaseOutputBuffer(result, false)
-                        }
-                    }
-                }
-                drain?.onFrame(frame + 1)
+                drainCodec(codec, muxer, info, startedRef = { started = it }, trackRef = { track = it }) { started }
+                drain?.onFrame(frameOffset + frame + 1)
             }
 
             codec.signalEndOfInputStream()
             surface.release()
             surface = null
-
             var eos = false
             while (!eos) {
                 val result = codec.dequeueOutputBuffer(info, 10_000)
@@ -108,5 +123,93 @@ class ReelEncoder {
         }
     }
 
-    private companion object { const val COLOR_FORMAT_SURFACE = 0x7F000789 }
+    private fun drainCodec(
+        codec: MediaCodec,
+        muxer: MediaMuxer,
+        info: MediaCodec.BufferInfo,
+        startedRef: (Boolean) -> Unit,
+        trackRef: (Int) -> Unit,
+        isStarted: () -> Boolean
+    ) {
+        while (true) {
+            val result = codec.dequeueOutputBuffer(info, 0)
+            when {
+                result == MediaCodec.INFO_TRY_AGAIN_LATER -> return
+                result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    if (isStarted()) throw IllegalStateException("Output format changed twice")
+                    val track = muxer.addTrack(codec.outputFormat)
+                    muxer.setOrientationHint(0)
+                    muxer.start()
+                    trackRef(track)
+                    startedRef(true)
+                }
+                result >= 0 -> {
+                    val encoded = codec.getOutputBuffer(result)
+                    if (encoded != null && info.size > 0 && isStarted()) {
+                        encoded.position(info.offset)
+                        encoded.limit(info.offset + info.size)
+                        val trackField = currentTrack.get()
+                        if (trackField >= 0) muxer.writeSampleData(trackField, encoded, info)
+                    }
+                    codec.releaseOutputBuffer(result, false)
+                }
+            }
+        }
+    }
+
+    private fun joinVideoSegments(main: File, cta: File, output: File) {
+        val first = MediaExtractor()
+        val second = MediaExtractor()
+        first.setDataSource(main.absolutePath)
+        second.setDataSource(cta.absolutePath)
+        try {
+            val firstTrack = findVideoTrack(first)
+            val secondTrack = findVideoTrack(second)
+            val format = first.getTrackFormat(firstTrack)
+            val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            muxer.setOrientationHint(0)
+            val outTrack = muxer.addTrack(format)
+            muxer.start()
+            try {
+                copySamples(first, firstTrack, muxer, outTrack, 0L)
+                copySamples(second, secondTrack, muxer, outTrack, 15_000_000L)
+            } finally {
+                try { muxer.stop() } catch (_: Exception) { }
+                muxer.release()
+            }
+        } finally {
+            first.release()
+            second.release()
+        }
+    }
+
+    private fun findVideoTrack(extractor: MediaExtractor): Int {
+        for (i in 0 until extractor.trackCount) {
+            if (extractor.getTrackFormat(i).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true) return i
+        }
+        throw IllegalStateException("No video track found")
+    }
+
+    private fun copySamples(extractor: MediaExtractor, track: Int, muxer: MediaMuxer, outTrack: Int, timeOffsetUs: Long) {
+        extractor.selectTrack(track)
+        val buffer = java.nio.ByteBuffer.allocate(1024 * 1024)
+        val info = MediaCodec.BufferInfo()
+        while (true) {
+            val size = extractor.readSampleData(buffer, 0)
+            if (size < 0) break
+            info.offset = 0
+            info.size = size
+            info.presentationTimeUs = extractor.sampleTime + timeOffsetUs
+            info.flags = extractor.sampleFlags
+            muxer.writeSampleData(outTrack, buffer, info)
+            extractor.advance()
+            buffer.clear()
+        }
+        extractor.unselectTrack(track)
+    }
+
+    private companion object {
+        const val COLOR_FORMAT_SURFACE = 0x7F000789
+        val currentTrack = ThreadLocal.withInitial { -1 }
+    }
 }
