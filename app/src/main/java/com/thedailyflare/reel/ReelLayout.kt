@@ -58,14 +58,22 @@ object ReelLayout {
 
         var y = TOP
         val titleLines = wrap(title.ifBlank { "Main heading" }, titlePaint, RIGHT - LEFT - 44f)
-        for (line in titleLines) {
-            val blockWidth = minOf(titlePaint.measureText(line) + 44f, RIGHT - LEFT)
-            val blockHeight = titlePaint.textSize + 28f
-            canvas.drawRoundRect(RectF(LEFT, y, LEFT + blockWidth, y + blockHeight), 20f, 20f, white)
-            canvas.drawText(line, LEFT + 22f, y + titlePaint.textSize + 2f, titlePaint)
-            y += blockHeight + GAP
+        val titleLineHeight = titlePaint.textSize + 8f
+        val titlePaddingV = 18f
+        val titleBlockHeight = titleLines.size * titleLineHeight + titlePaddingV * 2f
+        val titleBlockWidth = minOf(
+            titleLines.maxOf { titlePaint.measureText(it) } + 44f,
+            RIGHT - LEFT
+        )
+        canvas.drawRoundRect(
+            RectF(LEFT, y, LEFT + titleBlockWidth, y + titleBlockHeight),
+            20f, 20f, white
+        )
+        titleLines.forEachIndexed { index, line ->
+            val baseline = y + titlePaddingV + titlePaint.textSize - 2f + index * titleLineHeight
+            canvas.drawText(line, LEFT + 22f, baseline, titlePaint)
         }
-        y += 18f
+        y += titleBlockHeight + GAP + 18f
 
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
@@ -74,17 +82,26 @@ object ReelLayout {
         }
         val maxTextWidth = RIGHT - LEFT - 44f
         val lineHeight = 43f
+        val textPaddingV = 12f
 
         for (headline in headlines.take(7)) {
             if (headline.isBlank()) continue
-            for (line in wrap(headline, textPaint, maxTextWidth)) {
-                val blockWidth = minOf(textPaint.measureText(line) + 44f, RIGHT - LEFT)
-                val blockHeight = lineHeight + 24f
-                canvas.drawRoundRect(RectF(LEFT, y, LEFT + blockWidth, y + blockHeight), 20f, 20f, white)
-                canvas.drawText(line, LEFT + 22f, y + 39f, textPaint)
-                y += blockHeight + GAP
-                if (y > H - 80f) return
+            val lines = wrap(headline, textPaint, maxTextWidth)
+            val blockHeight = lines.size * lineHeight + textPaddingV * 2f
+            val blockWidth = minOf(
+                lines.maxOf { textPaint.measureText(it) } + 44f,
+                RIGHT - LEFT
+            )
+            canvas.drawRoundRect(
+                RectF(LEFT, y, LEFT + blockWidth, y + blockHeight),
+                20f, 20f, white
+            )
+            lines.forEachIndexed { index, line ->
+                val baseline = y + textPaddingV + 30f + index * lineHeight
+                canvas.drawText(line, LEFT + 22f, baseline, textPaint)
             }
+            y += blockHeight + GAP
+            if (y > H - 80f) return
         }
     }
 
