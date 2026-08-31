@@ -8,9 +8,8 @@ import android.media.MediaMuxer
 import android.net.Uri
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.nio.ByteBuffer
 
-/** Decodes the selected music and re-encodes it as AAC so MP4 muxing is reliable. */
+/** Decodes selected music and re-encodes it as AAC so MP4 muxing is reliable. */
 class AudioTranscoder(private val context: Context) {
     companion object { private const val MAX_US = 18_000_000L }
 
@@ -64,8 +63,8 @@ class AudioTranscoder(private val context: Context) {
                             MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
                             MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                                 val format = decoder.outputFormat
-                                sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE, sampleRate)
-                                channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT, channels)
+                                if (format.containsKey(MediaFormat.KEY_SAMPLE_RATE)) sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                                if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
                             }
                             else -> if (index >= 0) {
                                 val buffer = decoder.getOutputBuffer(index)
@@ -73,8 +72,7 @@ class AudioTranscoder(private val context: Context) {
                                 if (buffer != null && info.size > 0) {
                                     buffer.position(info.offset)
                                     buffer.limit(info.offset + info.size)
-                                    val bytesToWrite = minOf(info.size, pcm.size() + info.size)
-                                    val temp = ByteArray(bytesToWrite)
+                                    val temp = ByteArray(info.size)
                                     buffer.get(temp)
                                     pcm.write(temp)
                                 }
@@ -97,6 +95,7 @@ class AudioTranscoder(private val context: Context) {
     }
 
     private fun encodePcmToAac(pcm: ByteArray, sampleRate: Int, channels: Int, output: File): Boolean {
+        if (sampleRate <= 0 || channels <= 0) return false
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channels).apply {
             setInteger(MediaFormat.KEY_AAC_PROFILE, 2)
             setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
