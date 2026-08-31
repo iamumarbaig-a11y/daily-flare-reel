@@ -20,7 +20,6 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
-import java.io.FileOutputStream
 import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
@@ -146,17 +145,30 @@ class MainActivity : Activity() {
         thread(name = "daily-flare-export") {
             try {
                 val video = File(cacheDir, "daily_flare_video.mp4")
+                val audio = File(cacheDir, "daily_flare_audio_aac.mp4")
                 val output = File(cacheDir, "daily_flare_reel_18s.mp4")
-                video.delete(); output.delete()
+                video.delete(); audio.delete(); output.delete()
+
+                // Step 1: render the exact 18-second 1080x1920 video-only track.
                 ReelEncoder().encode(bg, cta, title, headlines, video)
-                val result = FinalExporter(this).export(video, music, output)
-                if (result.success) {
-                    val saved = saveToGallery(output)
-                    runOnUiThread {
-                        toast(if (saved) "Export complete: saved to Movies/Daily Flare Reel" else "Export completed but could not save to gallery")
-                    }
-                } else {
-                    runOnUiThread { toast("Export failed: ${result.error ?: "unknown error"}") }
+                if (!video.exists() || video.length() == 0L) {
+                    throw IllegalStateException("Video rendering produced no output")
+                }
+
+                // Step 2: decode/re-encode the user's music to AAC first. This avoids
+                // Media3 Transformer failures with arbitrary phone audio formats.
+                if (!AudioTranscoder(this).transcode(music, audio) || !audio.exists() || audio.length() == 0L) {
+                    throw IllegalStateException("Music could not be converted to AAC")
+                }
+
+                // Step 3: mux the two known-good MP4 tracks without re-rendering video.
+                if (!AudioMuxer().mux(video, audio, output) || !output.exists() || output.length() == 0L) {
+                    throw IllegalStateException("Audio/video muxing failed")
+                }
+
+                val saved = saveToGallery(output)
+                runOnUiThread {
+                    toast(if (saved) "Export complete: saved to Movies/Daily Flare Reel" else "Export completed but could not save to gallery")
                 }
             } catch (e: Exception) {
                 runOnUiThread { toast("Export failed: ${e.message ?: "unknown error"}") }
