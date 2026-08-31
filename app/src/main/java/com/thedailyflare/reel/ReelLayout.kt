@@ -6,19 +6,22 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 
-/** 1080x1920 reference layout. The final 3 seconds are a clean CTA card. */
+/** 15s news composition followed by a supplied 3s CTA image. */
 object ReelLayout {
-    fun draw(canvas: Canvas, title: String, headlines: List<String>, width: Int, height: Int) {
-        draw(canvas, title, headlines, width, height, showCta = false)
-    }
+    private const val W = 1080f
+    private const val H = 1920f
+    private const val LEFT = 108f
+    private const val TOP = 288f
+    private const val RIGHT = 972f
 
-    fun draw(canvas: Canvas, title: String, headlines: List<String>, width: Int, height: Int, showCta: Boolean) {
-        val sx = width / 1080f
-        val sy = height / 1920f
+    fun draw(canvas: Canvas, title: String, headlines: List<String>, width: Int, height: Int) =
+        draw(canvas, title, headlines, width, height, null, false)
+
+    fun draw(canvas: Canvas, title: String, headlines: List<String>, width: Int, height: Int, ctaBitmap: android.graphics.Bitmap?, showCta: Boolean) {
         canvas.save()
-        canvas.scale(sx, sy)
-        if (showCta) {
-            drawCta(canvas)
+        canvas.scale(width / W, height / H)
+        if (showCta && ctaBitmap != null) {
+            canvas.drawBitmap(ctaBitmap, null, RectF(0f, 0f, W, H), null)
         } else {
             drawNews(canvas, title, headlines)
         }
@@ -26,41 +29,47 @@ object ReelLayout {
     }
 
     private fun drawNews(canvas: Canvas, title: String, headlines: List<String>) {
-        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.BLACK
-            typeface = Typeface.create("sans", Typeface.BOLD)
-            textAlign = Paint.Align.CENTER
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+        paint.typeface = Typeface.create("sans", Typeface.BOLD)
+        paint.textSize = 72f
+        var y = TOP
+        for (line in wrap(title.ifBlank { "Main heading" }, paint, RIGHT - LEFT).take(2)) {
+            canvas.drawText(line, LEFT, y, paint)
+            y += 82f
         }
-        p.textSize = 72f
-        canvas.drawText(title, 540f, 350f, p)
-        p.textSize = 44f
-        var y = 500f
-        for (line in headlines.take(8)) {
-            val r = RectF(90f, y - 48f, 990f, y + 18f)
-            p.color = Color.WHITE
-            canvas.drawRoundRect(r, 24f, 24f, p)
-            p.color = Color.BLACK
-            canvas.drawText(line, 540f, y, p)
-            y += 120f
+
+        y += 82f
+        paint.textSize = 34f
+        paint.typeface = Typeface.create("sans", Typeface.NORMAL)
+        for (headline in headlines.take(7)) {
+            if (headline.isBlank()) continue
+            val lines = wrap(headline, paint, RIGHT - LEFT - 44f)
+            val lineHeight = 43f
+            val blockHeight = lines.size * lineHeight + 24f
+            val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+            canvas.drawRoundRect(RectF(LEFT, y, RIGHT, y + blockHeight), 20f, 20f, bg)
+            var ty = y + 39f
+            for (line in lines) {
+                canvas.drawText(line, LEFT + 22f, ty, paint)
+                ty += lineHeight
+            }
+            y += blockHeight + 18f
+            if (y > H - 80f) break
         }
     }
 
-    private fun drawCta(canvas: Canvas) {
-        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textAlign = Paint.Align.CENTER
-            typeface = Typeface.create("sans", Typeface.BOLD)
+    private fun wrap(value: String, paint: Paint, maxWidth: Float): List<String> {
+        val result = mutableListOf<String>()
+        for (paragraph in value.split("\n")) {
+            var line = ""
+            for (word in paragraph.trim().split(Regex("\\s+"))) {
+                if (word.isEmpty()) continue
+                val candidate = if (line.isEmpty()) word else "$line $word"
+                if (line.isEmpty() || paint.measureText(candidate) <= maxWidth) line = candidate
+                else { result.add(line); line = word }
+            }
+            if (line.isNotEmpty()) result.add(line)
         }
-        p.color = Color.WHITE
-        canvas.drawRect(0f, 0f, 1080f, 1920f, p)
-
-        p.color = Color.BLACK
-        p.textSize = 86f
-        canvas.drawText("THE DAILY FLARE", 540f, 820f, p)
-
-        p.textSize = 58f
-        canvas.drawText("Follow for the latest news", 540f, 980f, p)
-
-        p.textSize = 44f
-        canvas.drawText("Like • Share • Stay informed", 540f, 1085f, p)
+        return if (result.isEmpty()) listOf("") else result
     }
 }
