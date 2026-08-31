@@ -3,7 +3,6 @@ package com.thedailyflare.reel
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Rect
 import android.view.View
 
 class ReelPreviewView(context: Context) : View(context) {
@@ -13,10 +12,16 @@ class ReelPreviewView(context: Context) : View(context) {
     var ctaBitmap: Bitmap? = null
     var showCta: Boolean = false
 
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val width = MeasureSpec.getSize(widthMeasureSpec)
+        val height = if (width > 0) (width * 16f / 9f).toInt() else 0
+        setMeasuredDimension(width, height)
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val image = if (showCta) ctaBitmap else backgroundBitmap
-        image?.let { canvas.drawBitmap(it, null, Rect(0, 0, width, height), null) }
+        image?.let { ReelLayout.drawCover(canvas, it, width, height) }
         ReelLayout.draw(canvas, title, headlines, width, height, ctaBitmap, showCta)
     }
 }
