@@ -10,7 +10,6 @@ import android.net.Uri
 import java.io.File
 import java.nio.ByteBuffer
 
-/** Converts selected music to AAC-in-MP4 so it can be muxed reliably on Android. */
 class AudioTranscoder(private val context: Context) {
     companion object { private const val MAX_US = 18_000_000L }
 
@@ -62,7 +61,6 @@ class AudioTranscoder(private val context: Context) {
             setInteger(MediaFormat.KEY_AAC_PROFILE, 2)
             setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
-            setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
         }
         val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
         decoder.configure(inputFormat, null, null, 0)
@@ -96,7 +94,7 @@ class AudioTranscoder(private val context: Context) {
                                 decoder.queueInputBuffer(inIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                                 extractorEos = true
                             } else {
-                                decoder.queueInputBuffer(inIndex, 0, size, pts, extractor.sampleFlags)
+                                decoder.queueInputBuffer(inIndex, 0, size, pts, 0)
                                 extractor.advance()
                             }
                         }
@@ -104,26 +102,25 @@ class AudioTranscoder(private val context: Context) {
                 }
 
                 val decOut = decoder.dequeueOutputBuffer(decoderInfo, 10_000)
-                if (decOut == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    // Decoder output format is informational; encoder is configured from the source format.
-                } else if (decOut >= 0) {
+                if (decOut >= 0) {
                     val out = decoder.getOutputBuffer(decOut)
                     val eos = (decoderInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
-                    val size = decoderInfo.size
-                    if (size > 0 && out != null) {
-                        var copied = 0
-                        while (copied < size) {
+                    if (decoderInfo.size > 0 && out != null) {
+                        out.position(decoderInfo.offset)
+                        out.limit(decoderInfo.offset + decoderInfo.size)
+                        while (out.hasRemaining()) {
                             val encoderIn = encoder.dequeueInputBuffer(10_000)
                             if (encoderIn < 0) continue
-                            val encInput = encoder.getInputBuffer(encoderIn) ?: throw IllegalStateException("No encoder input buffer")
-                            val chunk = minOf(size - copied, encInput.capacity())
+                            val encInput = encoder.getInputBuffer(encoderIn) ?: break
+                            val chunk = minOf(out.remaining(), encInput.capacity())
                             encInput.clear()
-                            out.position(decoderInfo.offset + copied)
-                            out.limit(decoderInfo.offset + copied + chunk)
+                            val oldLimit = out.limit()
+                            out.limit(out.position() + chunk)
                             encInput.put(out)
-                            val chunkPts = decoderInfo.presentationTimeUs + (copied.toLong() * 1_000_000L / (sampleRate.toLong() * channels * 2L))
+                            out.limit(oldLimit)
+                            val pcmBytesPerSecond = sampleRate.toLong() * channels * 2L
+                            val chunkPts = decoderInfo.presentationTimeUs
                             encoder.queueInputBuffer(encoderIn, 0, chunk, chunkPts, 0)
-                            copied += chunk
                         }
                     }
                     if (eos && !decoderEosQueued) {
@@ -141,10 +138,8 @@ class AudioTranscoder(private val context: Context) {
                     when {
                         encOut == MediaCodec.INFO_TRY_AGAIN_LATER -> break
                         encOut == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                            if (muxerStarted) throw IllegalStateException("Audio output format changed twice")
                             audioTrack = muxer.addTrack(encoder.outputFormat)
-                            muxer.start()
-                            muxerStarted = true
+                            muxer.start(); muxerStarted = true
                         }
                         encOut >= 0 -> {
                             val encoded = encoder.getOutputBuffer(encOut)
@@ -163,7 +158,7 @@ class AudioTranscoder(private val context: Context) {
                 }
             }
             if (muxerStarted && wroteSamples) muxer.stop()
-            wroteSamples
+            return wroteSamples
         } finally {
             if (muxerStarted && !wroteSamples) try { muxer.stop() } catch (_: Exception) { }
             muxer.release()
