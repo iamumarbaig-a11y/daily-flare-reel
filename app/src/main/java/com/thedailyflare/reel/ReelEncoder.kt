@@ -37,15 +37,20 @@ class ReelEncoder {
                 val showCta = frame >= 15 * fps
                 val canvas: Canvas = surface.lockCanvas(null)
                 try {
-                    // Exactly one complete image is drawn as the base. ReelLayout only adds news text.
-                    canvas.drawBitmap(if (showCta) ctaBitmap else background, null, android.graphics.Rect(0, 0, width, height), null)
-                    ReelLayout.draw(canvas, title, headlines, width, height, null, false)
+                    // Draw exactly one base image. ReelLayout adds text only during the first 15 seconds.
+                    canvas.drawBitmap(
+                        if (showCta) ctaBitmap else background,
+                        null,
+                        android.graphics.Rect(0, 0, width, height),
+                        null
+                    )
+                    if (!showCta) {
+                        ReelLayout.draw(canvas, title, headlines, width, height, null, false)
+                    }
                 } finally {
                     surface.unlockCanvasAndPost(canvas)
                 }
 
-                // Canvas-backed input surfaces use frame timing from the surface. Pace frames at 30fps
-                // so the encoded stream is actually 18 seconds rather than a burst of 540 frames.
                 Thread.sleep(frameDelayMs)
 
                 while (true) {
@@ -101,7 +106,6 @@ class ReelEncoder {
             muxer.release()
             try { codec.stop() } catch (_: Exception) { }
             codec.release()
-            if (!surface.isValid) { /* already released */ }
         }
     }
 
