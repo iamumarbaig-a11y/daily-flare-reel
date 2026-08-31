@@ -87,13 +87,10 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Decode EXIF orientation first, then center-crop to an exact 9:16 frame. */
     private fun decodePortrait(uri: Uri): Bitmap? {
         return try {
             val decoded = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } ?: return null
-            val orientation = contentResolver.openInputStream(uri)?.use {
-                ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
-            } ?: ExifInterface.ORIENTATION_NORMAL
+            val orientation = contentResolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) } ?: ExifInterface.ORIENTATION_NORMAL
             val matrix = Matrix()
             when (orientation) {
                 ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
@@ -104,33 +101,18 @@ class MainActivity : Activity() {
                 ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(-90f); matrix.postScale(-1f, 1f) }
                 ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
             }
-            val oriented = if (orientation == ExifInterface.ORIENTATION_NORMAL) decoded
-            else Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also { if (it !== decoded) decoded.recycle() }
+            val oriented = if (orientation == ExifInterface.ORIENTATION_NORMAL) decoded else Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also { if (it !== decoded) decoded.recycle() }
             centerCropPortrait(oriented)
         } catch (_: Exception) { null }
     }
 
     private fun centerCropPortrait(source: Bitmap): Bitmap {
-        val targetW = 1080
-        val targetH = 1920
-        val targetRatio = targetW.toFloat() / targetH
-        val sourceRatio = source.width.toFloat() / source.height
-        val cropW: Int
-        val cropH: Int
-        if (sourceRatio > targetRatio) {
-            cropH = source.height
-            cropW = (cropH * targetRatio).toInt()
-        } else {
-            cropW = source.width
-            cropH = (cropW / targetRatio).toInt()
-        }
-        val left = (source.width - cropW) / 2
-        val top = (source.height - cropH) / 2
-        val cropped = Bitmap.createBitmap(source, left, top, cropW, cropH)
-        val scaled = Bitmap.createScaledBitmap(cropped, targetW, targetH, true)
-        if (cropped !== source) cropped.recycle()
-        if (scaled !== source) source.recycle()
-        return scaled
+        val targetW = 1080; val targetH = 1920; val targetRatio = targetW.toFloat() / targetH; val sourceRatio = source.width.toFloat() / source.height
+        val cropW: Int; val cropH: Int
+        if (sourceRatio > targetRatio) { cropH = source.height; cropW = (cropH * targetRatio).toInt() } else { cropW = source.width; cropH = (cropW / targetRatio).toInt() }
+        val left = (source.width - cropW) / 2; val top = (source.height - cropH) / 2
+        val cropped = Bitmap.createBitmap(source, left, top, cropW, cropH); val scaled = Bitmap.createScaledBitmap(cropped, targetW, targetH, true)
+        if (cropped !== source) cropped.recycle(); if (scaled !== source) source.recycle(); return scaled
     }
 
     private fun refreshPreview() { preview.title = titleInput.text.toString(); preview.headlines = headlineInputs.map { it.text.toString() }; preview.invalidate() }
@@ -148,35 +130,16 @@ class MainActivity : Activity() {
                 val audio = File(cacheDir, "daily_flare_audio_aac.mp4")
                 val output = File(cacheDir, "daily_flare_reel_18s.mp4")
                 video.delete(); audio.delete(); output.delete()
-
-                // Step 1: render the exact 18-second 1080x1920 video-only track.
-                ReelEncoder().encode(bg, cta, title, headlines, video)
-                if (!video.exists() || video.length() == 0L) {
-                    throw IllegalStateException("Video rendering produced no output")
-                }
-
-                // Step 2: decode/re-encode the user's music to AAC first. This avoids
-                // Media3 Transformer failures with arbitrary phone audio formats.
-                if (!AudioTranscoder(this).transcode(music, audio) || !audio.exists() || audio.length() == 0L) {
-                    throw IllegalStateException("Music could not be converted to AAC")
-                }
-
-                // Step 3: mux the two known-good MP4 tracks without re-rendering video.
-                if (!AudioMuxer().mux(video, audio, output) || !output.exists() || output.length() == 0L) {
-                    throw IllegalStateException("Audio/video muxing failed")
-                }
-
+                ReelEncoder(this).encode(bg, cta, title, headlines, video)
+                if (!video.exists() || video.length() == 0L) throw IllegalStateException("Video rendering produced no output")
+                if (!AudioTranscoder(this).transcode(music, audio) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Music could not be converted to AAC")
+                if (!AudioMuxer().mux(video, audio, output) || !output.exists() || output.length() == 0L) throw IllegalStateException("Audio/video muxing failed")
                 val saved = saveToGallery(output)
-                runOnUiThread {
-                    toast(if (saved) "Export complete: saved to Movies/Daily Flare Reel" else "Export completed but could not save to gallery")
-                }
-            } catch (e: Exception) {
-                runOnUiThread { toast("Export failed: ${e.message ?: "unknown error"}") }
-            }
+                runOnUiThread { toast(if (saved) "Export complete: saved to Movies/Daily Flare Reel" else "Export completed but could not save to gallery") }
+            } catch (e: Exception) { runOnUiThread { toast("Export failed: ${e.message ?: "unknown error"}") } }
         }
     }
 
-    /** Publish the completed MP4 into Android's shared Movies collection so Gallery/File Manager can see it. */
     private fun saveToGallery(source: File): Boolean {
         if (!source.exists() || source.length() == 0L) return false
         return try {
@@ -189,23 +152,13 @@ class MainActivity : Activity() {
                 }
                 val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return false
                 try {
-                    contentResolver.openOutputStream(uri)?.use { out ->
-                        source.inputStream().use { input -> input.copyTo(out) }
-                    } ?: return false
-                    values.clear()
-                    values.put(MediaStore.Video.Media.IS_PENDING, 0)
-                    contentResolver.update(uri, values, null, null) > 0
-                } catch (e: Exception) {
-                    contentResolver.delete(uri, null, null)
-                    false
-                }
+                    contentResolver.openOutputStream(uri)?.use { out -> source.inputStream().use { input -> input.copyTo(out) } } ?: return false
+                    values.clear(); values.put(MediaStore.Video.Media.IS_PENDING, 0); contentResolver.update(uri, values, null, null) > 0
+                } catch (_: Exception) { contentResolver.delete(uri, null, null); false }
             } else {
-                val movies = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
-                val dir = File(movies, "Daily Flare Reel").apply { mkdirs() }
-                val destination = File(dir, "daily_flare_reel_${System.currentTimeMillis()}.mp4")
-                source.copyTo(destination, overwrite = true)
-                sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(destination)))
-                destination.exists() && destination.length() > 0L
+                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "Daily Flare Reel").apply { mkdirs() }
+                val destination = File(dir, "daily_flare_reel_${System.currentTimeMillis()}.mp4"); source.copyTo(destination, overwrite = true)
+                sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(destination))); destination.exists() && destination.length() > 0L
             }
         } catch (_: Exception) { false }
     }
