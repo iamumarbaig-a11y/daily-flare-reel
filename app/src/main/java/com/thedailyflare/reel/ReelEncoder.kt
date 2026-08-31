@@ -2,6 +2,7 @@ package com.thedailyflare.reel
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.media.MediaMuxer
@@ -25,76 +26,56 @@ class ReelEncoder {
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
         }
         val codec = MediaCodec.createEncoderByType("video/avc")
-        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        val surface: Surface = codec.createInputSurface()
-        codec.start()
+        val surface: Surface
         val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        var track = -1
         var started = false
+        var eos = false
         val info = MediaCodec.BufferInfo()
         try {
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            surface = codec.createInputSurface()
+            codec.start()
+
             for (frame in 0 until totalFrames) {
                 val showCta = frame >= 15 * fps
                 val canvas: Canvas = surface.lockCanvas(null)
                 try {
-                    // Draw exactly one base image. ReelLayout adds text only during the first 15 seconds.
                     canvas.drawBitmap(
                         if (showCta) ctaBitmap else background,
                         null,
-                        android.graphics.Rect(0, 0, width, height),
+                        Rect(0, 0, width, height),
                         null
                     )
-                    if (!showCta) {
-                        ReelLayout.draw(canvas, title, headlines, width, height, null, false)
-                    }
+                    if (!showCta) ReelLayout.draw(canvas, title, headlines, width, height, null, false)
                 } finally {
                     surface.unlockCanvasAndPost(canvas)
                 }
-
                 Thread.sleep(frameDelayMs)
-
-                while (true) {
-                    val result = codec.dequeueOutputBuffer(info, 0)
-                    when {
-                        result == MediaCodec.INFO_TRY_AGAIN_LATER -> break
-                        result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                            if (started) throw IllegalStateException("Output format changed twice")
-                            track = muxer.addTrack(codec.outputFormat)
-                            muxer.start()
-                            started = true
-                        }
-                        result >= 0 -> {
-                            val encoded = codec.getOutputBuffer(result)
-                            if (encoded != null && info.size > 0 && started) {
-                                encoded.position(info.offset)
-                                encoded.limit(info.offset + info.size)
-                                muxer.writeSampleData(track, encoded, info)
-                            }
-                            codec.releaseOutputBuffer(result, false)
-                        }
-                    }
+                drainCodec(codec, muxer, info) { trackStarted ->
+                    if (trackStarted) started = true
                 }
                 drain?.onFrame(frame + 1)
             }
 
-            surface.release()
+            // The input surface must remain alive until the EOS signal is queued.
             codec.signalEndOfInputStream()
-            var eos = false
             while (!eos) {
                 val result = codec.dequeueOutputBuffer(info, 10_000)
                 when {
+                    result == MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
                     result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                         if (started) throw IllegalStateException("Output format changed twice")
-                        track = muxer.addTrack(codec.outputFormat)
-                        muxer.start()
-                        started = true
+                        muxer.addTrack(codec.outputFormat).also {
+                            muxer.start()
+                            started = true
+                        }
                     }
                     result >= 0 -> {
                         val encoded = codec.getOutputBuffer(result)
                         if (encoded != null && info.size > 0 && started) {
                             encoded.position(info.offset)
                             encoded.limit(info.offset + info.size)
-                            muxer.writeSampleData(track, encoded, info)
+                            muxer.writeSampleData(findVideoTrack(muxer, codec, started), encoded, info)
                         }
                         eos = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
                         codec.releaseOutputBuffer(result, false)
@@ -102,10 +83,40 @@ class ReelEncoder {
                 }
             }
         } finally {
-            if (started) muxer.stop()
+            try { surface.release() } catch (_: Exception) { }
+            if (started) try { muxer.stop() } catch (_: Exception) { }
             muxer.release()
             try { codec.stop() } catch (_: Exception) { }
             codec.release()
+        }
+    }
+
+    private fun findVideoTrack(muxer: MediaMuxer, codec: MediaCodec, started: Boolean): Int {
+        // The encoder has exactly one track; its output index is stable after muxer.start().
+        // MediaMuxer does not expose track lookup, so this is always the first added track.
+        return 0
+    }
+
+    private fun drainCodec(codec: MediaCodec, muxer: MediaMuxer, info: MediaCodec.BufferInfo, onStarted: (Boolean) -> Unit) {
+        while (true) {
+            val result = codec.dequeueOutputBuffer(info, 0)
+            when {
+                result == MediaCodec.INFO_TRY_AGAIN_LATER -> return
+                result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    muxer.addTrack(codec.outputFormat)
+                    muxer.start()
+                    onStarted(true)
+                }
+                result >= 0 -> {
+                    val encoded = codec.getOutputBuffer(result)
+                    if (encoded != null && info.size > 0) {
+                        encoded.position(info.offset)
+                        encoded.limit(info.offset + info.size)
+                        muxer.writeSampleData(0, encoded, info)
+                    }
+                    codec.releaseOutputBuffer(result, false)
+                }
+            }
         }
     }
 
