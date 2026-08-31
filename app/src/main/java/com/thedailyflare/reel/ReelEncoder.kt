@@ -43,12 +43,11 @@ class ReelEncoder {
             for (frame in 0 until totalFrames) {
                 val canvas: Canvas = surface.lockCanvas(null)
                 try {
-                    // Frames 0..449 = 15s main image + text.
-                    // Frames 450..539 = 3s CTA image only.
                     if (frame < mainFrames) {
                         ReelLayout.drawCover(canvas, background, width, height)
                         ReelLayout.draw(canvas, title, headlines, width, height, null, false)
                     } else {
+                        // Exactly the final 90 frames (3 seconds) are the CTA image.
                         ReelLayout.drawCover(canvas, ctaBitmap, width, height)
                     }
                 } finally {
@@ -56,11 +55,29 @@ class ReelEncoder {
                 }
 
                 Thread.sleep(1000L / fps)
-                drainEncoder(codec, muxer, info, startedState = { started }, setStarted = { value ->
-                    started = value
-                    if (value) track = muxer.trackCount - 1
-                })
 
+                while (true) {
+                    val result = codec.dequeueOutputBuffer(info, 0)
+                    when {
+                        result == MediaCodec.INFO_TRY_AGAIN_LATER -> break
+                        result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                            if (started) throw IllegalStateException("Output format changed twice")
+                            track = muxer.addTrack(codec.outputFormat)
+                            muxer.setOrientationHint(0)
+                            muxer.start()
+                            started = true
+                        }
+                        result >= 0 -> {
+                            val encoded = codec.getOutputBuffer(result)
+                            if (encoded != null && info.size > 0 && started) {
+                                encoded.position(info.offset)
+                                encoded.limit(info.offset + info.size)
+                                muxer.writeSampleData(track, encoded, info)
+                            }
+                            codec.releaseOutputBuffer(result, false)
+                        }
+                    }
+                }
                 drain?.onFrame(frame + 1)
             }
 
@@ -100,40 +117,6 @@ class ReelEncoder {
             muxer.release()
             try { codec.stop() } catch (_: Exception) { }
             codec.release()
-        }
-    }
-
-    private fun drainEncoder(
-        codec: MediaCodec,
-        muxer: MediaMuxer,
-        info: MediaCodec.BufferInfo,
-        startedState: () -> Boolean,
-        setStarted: (Boolean) -> Unit
-    ) {
-        var started = startedState()
-        var track = -1
-        while (true) {
-            val result = codec.dequeueOutputBuffer(info, 0)
-            when {
-                result == MediaCodec.INFO_TRY_AGAIN_LATER -> break
-                result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    if (started) throw IllegalStateException("Output format changed twice")
-                    track = muxer.addTrack(codec.outputFormat)
-                    muxer.setOrientationHint(0)
-                    muxer.start()
-                    started = true
-                    setStarted(true)
-                }
-                result >= 0 -> {
-                    val encoded = codec.getOutputBuffer(result)
-                    if (encoded != null && info.size > 0 && started && track >= 0) {
-                        encoded.position(info.offset)
-                        encoded.limit(info.offset + info.size)
-                        muxer.writeSampleData(track, encoded, info)
-                    }
-                    codec.releaseOutputBuffer(result, false)
-                }
-            }
         }
     }
 }
