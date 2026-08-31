@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 
@@ -11,10 +12,26 @@ import android.graphics.Typeface
 object ReelLayout {
     private const val W = 1080f
     private const val H = 1920f
-    private const val LEFT = 108f       // 10% from left
-    private const val TOP = 288f        // 15% from top
+    private const val LEFT = 108f
+    private const val TOP = 288f
     private const val RIGHT = 972f
     private const val GAP = 18f
+
+    fun drawCover(canvas: Canvas, bitmap: Bitmap, width: Int, height: Int) {
+        if (width <= 0 || height <= 0 || bitmap.width <= 0 || bitmap.height <= 0) return
+        val sourceRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+        val targetRatio = width.toFloat() / height.toFloat()
+        val src = if (sourceRatio > targetRatio) {
+            val cropWidth = (bitmap.height * targetRatio).toInt().coerceAtLeast(1)
+            val left = ((bitmap.width - cropWidth) / 2).coerceAtLeast(0)
+            Rect(left, 0, (left + cropWidth).coerceAtMost(bitmap.width), bitmap.height)
+        } else {
+            val cropHeight = (bitmap.width / targetRatio).toInt().coerceAtLeast(1)
+            val top = ((bitmap.height - cropHeight) / 2).coerceAtLeast(0)
+            Rect(0, top, bitmap.width, (top + cropHeight).coerceAtMost(bitmap.height))
+        }
+        canvas.drawBitmap(bitmap, src, Rect(0, 0, width, height), null)
+    }
 
     fun draw(canvas: Canvas, title: String, headlines: List<String>, width: Int, height: Int) =
         draw(canvas, title, headlines, width, height, null, false)
@@ -24,8 +41,7 @@ object ReelLayout {
         canvas.save()
         canvas.scale(width / W, height / H)
         if (showCta && ctaBitmap != null) {
-            // CTA is a complete user-supplied image. Draw absolutely nothing over it.
-            canvas.drawBitmap(ctaBitmap, null, RectF(0f, 0f, W, H), null)
+            drawCover(canvas, ctaBitmap, W.toInt(), H.toInt())
         } else {
             drawNews(canvas, title, headlines)
         }
@@ -40,17 +56,12 @@ object ReelLayout {
         }
         val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
 
-        // Main heading: large black bold text with a fitted white rounded background.
-        // The background follows the actual rendered line width; it is never a fixed block.
         var y = TOP
         val titleLines = wrap(title.ifBlank { "Main heading" }, titlePaint, RIGHT - LEFT - 44f)
         for (line in titleLines) {
             val blockWidth = minOf(titlePaint.measureText(line) + 44f, RIGHT - LEFT)
             val blockHeight = titlePaint.textSize + 28f
-            canvas.drawRoundRect(
-                RectF(LEFT, y, LEFT + blockWidth, y + blockHeight),
-                20f, 20f, white
-            )
+            canvas.drawRoundRect(RectF(LEFT, y, LEFT + blockWidth, y + blockHeight), 20f, 20f, white)
             canvas.drawText(line, LEFT + 22f, y + titlePaint.textSize + 2f, titlePaint)
             y += blockHeight + GAP
         }
@@ -64,16 +75,12 @@ object ReelLayout {
         val maxTextWidth = RIGHT - LEFT - 44f
         val lineHeight = 43f
 
-        // Every WRAPPED LINE gets its own fitted white rounded block.
         for (headline in headlines.take(7)) {
             if (headline.isBlank()) continue
             for (line in wrap(headline, textPaint, maxTextWidth)) {
                 val blockWidth = minOf(textPaint.measureText(line) + 44f, RIGHT - LEFT)
                 val blockHeight = lineHeight + 24f
-                canvas.drawRoundRect(
-                    RectF(LEFT, y, LEFT + blockWidth, y + blockHeight),
-                    20f, 20f, white
-                )
+                canvas.drawRoundRect(RectF(LEFT, y, LEFT + blockWidth, y + blockHeight), 20f, 20f, white)
                 canvas.drawText(line, LEFT + 22f, y + 39f, textPaint)
                 y += blockHeight + GAP
                 if (y > H - 80f) return
