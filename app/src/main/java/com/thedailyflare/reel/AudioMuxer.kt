@@ -50,7 +50,7 @@ class AudioMuxer {
         }
 
         try {
-            copy(videoExtractor, videoTrack, outVideo, limitDuration = true)
+            copy(videoExtractor, videoTrack, outVideo)
             copy(audioExtractor, audioTrack, outAudio, limitDuration = true)
             muxer.stop()
             return true
