@@ -30,7 +30,7 @@ class ReelEncoder(private val context: Context) {
         output.delete()
         val width = 1080
         val height = 1920
-        val fps = 30
+        val fps = 60
         // Narration controls the reel length. Never force variable text into 15 seconds.
         val mainFrames = (((voiceDurationMs.coerceAtLeast(1L) + 999L) / 1000L) * fps).toInt().coerceAtLeast(fps)
         val ctaFrames = 3 * fps
