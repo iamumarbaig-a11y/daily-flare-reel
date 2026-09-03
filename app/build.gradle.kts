@@ -17,8 +17,8 @@ android {
         applicationId = "com.thedailyflare.reel"
         minSdk = 26
         targetSdk = 35
-        versionCode = 39
-        versionName = "39-kokoro-generation-isolation"
+        versionCode = 40
+        versionName = "40-kokoro-voices-speed"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
