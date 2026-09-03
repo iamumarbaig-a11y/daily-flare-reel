@@ -5,6 +5,8 @@ import android.content.Intent
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.ViewGroup
 import android.widget.*
 import androidx.documentfile.provider.DocumentFile
@@ -19,6 +21,7 @@ class KokoroExperimentActivity : Activity() {
     private lateinit var textInput: EditText
     private var modelDir: File? = null
     private var player: MediaPlayer? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -191,48 +194,75 @@ class KokoroExperimentActivity : Activity() {
             return
         }
 
-        status.text = "Generating voice locally..."
+        // Keep the working folder/persistence code completely untouched.
+        // This test isolates native engine creation, synthesis, WAV writing,
+        // and playback so we can see exactly which stage fails.
+        status.text = "Checking Kokoro model..."
         Thread {
             var engine: OfflineTts? = null
             try {
-                // Create, generate and release on this same thread.
+                mainHandler.post { status.text = "Loading Kokoro model..." }
                 engine = createEngine(packageRoot)
 
-                val config = GenerationConfig(
-                    sid = sid,
-                    speed = 1.0f,
-                    silenceScale = 0.2f
-                )
-                val audio = engine.generateWithConfigAndCallback(
+                mainHandler.post { status.text = "Generating voice locally..." }
+
+                // Use the simplest generation API. The previous callback path
+                // enters JNI repeatedly and is unnecessary for a first stability test.
+                val audio = engine.generate(
                     text = text,
-                    config = config,
-                    callback = { _: FloatArray -> 1 }
+                    sid = sid,
+                    speed = 1.0f
                 )
 
+                if (audio.samples.isEmpty()) {
+                    throw IllegalStateException("Kokoro returned empty audio")
+                }
+
+                mainHandler.post { status.text = "Saving generated audio..." }
                 val output = File(cacheDir, "kokoro_$sid.wav")
                 output.delete()
-                val saved = audio.save(filename = output.absolutePath)
-                if (!saved || !output.isFile || output.length() == 0L) {
-                    throw IllegalStateException("Kokoro generated no playable audio")
+
+                audio.save(filename = output.absolutePath)
+
+                if (!output.isFile || output.length() < 128L) {
+                    throw IllegalStateException("Generated WAV file is empty")
                 }
 
-                runOnUiThread {
-                    player?.release()
-                    player = MediaPlayer().apply {
-                        setDataSource(output.absolutePath)
-                        prepare()
-                        start()
-                    }
-                    status.text = "Playing local Kokoro audio."
+                // Release the native engine before Android playback starts.
+                try {
+                    engine.release()
+                } catch (_: Throwable) {
                 }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    status.text = "Generation error: " + (e.message ?: e.javaClass.simpleName)
+                engine = null
+
+                mainHandler.post {
+                    try {
+                        status.text = "Playing local Kokoro audio..."
+                        player?.release()
+                        player = MediaPlayer().apply {
+                            setDataSource(output.absolutePath)
+                            setOnCompletionListener {
+                                status.text = "Kokoro generation completed successfully."
+                            }
+                            prepare()
+                            start()
+                        }
+                    } catch (e: Exception) {
+                        status.text = "Audio playback error: " +
+                            (e.message ?: e.javaClass.simpleName)
+                    }
+                }
+            } catch (t: Throwable) {
+                // Java exceptions are caught here. If Android still exits to
+                // home, the remaining fault is inside native JNI/ONNX code.
+                mainHandler.post {
+                    status.text = "Generation error: " +
+                        (t.message ?: t.javaClass.simpleName)
                 }
             } finally {
                 try {
                     engine?.release()
-                } catch (_: Exception) {
+                } catch (_: Throwable) {
                 }
             }
         }.start()
