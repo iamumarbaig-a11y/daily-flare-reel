@@ -12,11 +12,14 @@ class VoiceTts(context: Context) {
     private var tts: TextToSpeech? = null
     private var ready = false
     private var voices: List<VoiceOption> = emptyList()
+    var engineName: String = ""
+        private set
 
     fun initialize(onReady: (List<VoiceOption>) -> Unit, onError: (String) -> Unit) {
         tts = TextToSpeech(appContext) { status ->
             if (status != TextToSpeech.SUCCESS) { onError("Android Text-to-Speech is unavailable"); return@TextToSpeech }
             ready = true
+            engineName = tts?.defaultEngine ?: "Android TTS"
             voices = tts?.voices?.filter { it.locale.language == "en" }?.sortedBy { it.name }?.map {
                 VoiceOption(it.name, it.locale.displayName + " — " + it.name)
             } ?: emptyList()
