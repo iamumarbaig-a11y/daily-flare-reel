@@ -8,7 +8,7 @@ import java.nio.ByteBuffer
 
 class AudioMuxer {
     companion object {
-        private const val OUTPUT_DURATION_US = 18_000_000L
+
     }
 
     fun mux(video: File, audio: File, output: File): Boolean {
@@ -35,13 +35,12 @@ class AudioMuxer {
         muxer.start()
         val buffer = ByteBuffer.allocateDirect(1024 * 1024)
 
-        fun copy(extractor: MediaExtractor, track: Int, destination: Int, limitDuration: Boolean) {
+        fun copy(extractor: MediaExtractor, track: Int, destination: Int) {
             extractor.selectTrack(track)
             val info = MediaCodec.BufferInfo()
             while (true) {
                 val sampleTime = extractor.sampleTime
                 if (sampleTime < 0L) break
-                if (limitDuration && sampleTime >= OUTPUT_DURATION_US) break
                 val size = extractor.readSampleData(buffer, 0)
                 if (size < 0) break
                 info.set(0, size, sampleTime, extractor.sampleFlags)
