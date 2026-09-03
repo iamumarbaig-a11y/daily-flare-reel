@@ -7,6 +7,7 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation(files("libs/sherpa-onnx-1.13.7.aar"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("org.apache.commons:commons-compress:1.27.1")
 }
 
 android {
@@ -16,8 +17,8 @@ android {
         applicationId = "com.thedailyflare.reel"
         minSdk = 26
         targetSdk = 35
-        versionCode = 34
-        versionName = "34"
+        versionCode = 35
+        versionName = "35"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
