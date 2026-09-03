@@ -43,6 +43,7 @@ class MainActivity : Activity() {
     private lateinit var exportProgress: ProgressBar
     private var voicePlayer: MediaPlayer? = null
     private var voiceOptions = emptyList<VoiceTts.VoiceOption>()
+    private var selectedVoice: VoiceTts.VoiceOption? = null
     private lateinit var titleInput: EditText
     private val headlineInputs = mutableListOf<EditText>()
     private var mainBitmap: Bitmap? = null
@@ -91,6 +92,14 @@ class MainActivity : Activity() {
         speedSpinner.setSelection(voiceSpeeds.indexOf(1.0f))
         root.addView(speedSpinner, lp())
         voiceTts = VoiceTts(this)
+        voiceSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
+                selectedVoice = null
+            }
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                selectedVoice = voiceOptions.getOrNull(position)
+            }
+        }
         refreshKokoroState()
         root.addView(button("TEST SELECTED KOKORO VOICE") { testVoice() }, lp())
         root.addView(button("OPEN KOKORO MODEL PACKAGE") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }, lp())
@@ -115,15 +124,28 @@ class MainActivity : Activity() {
     }
 
     private fun refreshKokoroState() {
+        // Keep the exact voice selected by the user when returning from the
+        // model package screen. Do not fall back silently to another voice.
+        val previousName = selectedVoice?.name
         voiceTts.initialize({ options ->
             runOnUiThread {
                 voiceOptions = options
-                voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options.map { it.label })
+                val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options.map { it.label })
+                voiceSpinner.adapter = adapter
+                val restoredIndex = options.indexOfFirst { it.name == previousName }
+                    .takeIf { it >= 0 } ?: 0
+                if (options.isNotEmpty()) {
+                    voiceSpinner.setSelection(restoredIndex, false)
+                    selectedVoice = options[restoredIndex]
+                } else {
+                    selectedVoice = null
+                }
                 voiceStatus.text = "Kokoro is ready locally — " + options.size + " voices available"
             }
         }, { error ->
             runOnUiThread {
                 voiceOptions = emptyList()
+                selectedVoice = null
                 voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, emptyList<String>())
                 voiceStatus.text = error
             }
@@ -183,7 +205,8 @@ class MainActivity : Activity() {
 
     private fun testVoice() {
         if (!::voiceTts.isInitialized) return toast("Voice service is still loading")
-        val selected = voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?.name
+        val selected = selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)
+            ?: return toast("Select a Kokoro voice first")
         val parts = mutableListOf<String>()
         val heading = titleInput.text.toString().trim()
         if (heading.isNotBlank()) parts.add(heading)
@@ -261,7 +284,8 @@ class MainActivity : Activity() {
                 val speechText = speechParts.joinToString(". ")
                 if (speechText.isBlank()) throw IllegalStateException("Enter a heading or subheading for the voice")
 
-                val selectedVoice = voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?.name
+                val selectedVoice = selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)
+                    ?: throw IllegalStateException("Select a Kokoro voice first")
                 val voiceLatch = CountDownLatch(1)
                 var voiceOk = false
                 if (!::voiceTts.isInitialized) throw IllegalStateException("Kokoro voice service is not ready")
