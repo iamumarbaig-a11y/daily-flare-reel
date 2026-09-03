@@ -2,9 +2,8 @@ name: Build Daily Flare Reel
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, kokoro-experimental ]
   workflow_dispatch:
-
 
 jobs:
   build:
@@ -30,5 +29,5 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: daily-flare-reel-debug-v30
+          name: daily-flare-reel-kokoro-experimental-v34
           path: app/build/outputs/apk/debug/*.apk
