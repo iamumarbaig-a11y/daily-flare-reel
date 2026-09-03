@@ -13,7 +13,6 @@ import kotlin.math.floor
 /** Decodes selected music and re-encodes it as AAC so MP4 muxing is reliable. */
 class AudioTranscoder(private val context: Context) {
     companion object {
-        private const val MAX_US = 18_000_000L
         private const val MUSIC_VOLUME = 0.15f
     }
 
@@ -47,7 +46,7 @@ class AudioTranscoder(private val context: Context) {
                                 val input = decoder.getInputBuffer(index) ?: return false
                                 input.clear()
                                 val pts = extractor.sampleTime
-                                if (pts < 0L || pts >= MAX_US) {
+                                if (pts < 0L) {
                                     decoder.queueInputBuffer(index, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                                     inputDone = true
                                 } else {
@@ -111,12 +110,12 @@ class AudioTranscoder(private val context: Context) {
             val targetChannels = music.channels
             val musicSamples = toTarget(music, targetRate, targetChannels)
             val voiceSamples = toTarget(voice, targetRate, targetChannels)
-            val maxFrames = targetRate * 18
-            val totalSamples = minOf(musicSamples.size, maxFrames * targetChannels)
+            // Match the full generated voice length. Loop music if it is shorter.
+            val totalSamples = voiceSamples.size
             val mixed = ByteArray(totalSamples * 2)
             var i = 0
             while (i < totalSamples) {
-                val musicValue = (musicSamples[i] * MUSIC_VOLUME).toInt()
+                val musicValue = if (musicSamples.isNotEmpty()) (musicSamples[i % musicSamples.size] * MUSIC_VOLUME).toInt() else 0
                 val voiceValue = if (i < voiceSamples.size) voiceSamples[i].toInt() else 0
                 val value = (musicValue + voiceValue).coerceIn(-32768, 32767)
                 mixed[i * 2] = (value and 0xFF).toByte()
@@ -213,7 +212,7 @@ class AudioTranscoder(private val context: Context) {
     private fun toTarget(source: PcmData, targetRate: Int, targetChannels: Int): ShortArray {
         if (source.sampleRate <= 0 || source.channels <= 0) return ShortArray(0)
         val sourceFrames = source.samples.size / source.channels
-        val targetFrames = minOf(targetRate * 18, ((sourceFrames.toLong() * targetRate) / source.sampleRate).toInt())
+        val targetFrames = ((sourceFrames.toLong() * targetRate) / source.sampleRate).toInt()
         val result = ShortArray(targetFrames * targetChannels)
         var frame = 0
         while (frame < targetFrames) {
