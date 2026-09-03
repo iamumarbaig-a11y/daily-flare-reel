@@ -12,7 +12,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
-import android.provider.Settings
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
@@ -187,7 +186,7 @@ class MainActivity : Activity() {
 
     private fun openVoiceSettings() {
         try {
-            startActivity(Intent(Settings.ACTION_TEXT_TO_SPEECH_SETTINGS))
+            startActivity(Intent("com.android.settings.TTS_SETTINGS"))
         } catch (_: Exception) {
             toast("Android TTS settings are unavailable on this phone")
         }
