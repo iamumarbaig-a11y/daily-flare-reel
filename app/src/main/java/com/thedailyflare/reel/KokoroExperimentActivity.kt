@@ -23,11 +23,8 @@ class KokoroExperimentActivity : Activity() {
     private var player: MediaPlayer? = null
     private lateinit var voiceSpinner: Spinner
     private lateinit var speedSpinner: Spinner
-    private val voices = listOf(
-        "Bella" to 1, "Sarah" to 2, "Nicole" to 3, "Sky" to 4,
-        "Adam" to 5, "Michael" to 6, "Emma" to 7, "Isabella" to 8,
-        "George" to 9, "Lewis" to 10
-    )
+    // Use the exact same voice registry as the main reel screen.
+    private val voices = VoiceTts.AVAILABLE_VOICES
     private val speeds = listOf(0.75f, 0.9f, 1.0f, 1.1f, 1.25f, 1.5f)
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -61,14 +58,14 @@ class KokoroExperimentActivity : Activity() {
         root.addView(textInput, lp())
         root.addView(TextView(this).apply { text = "SELECT VOICE" }, lp())
         voiceSpinner = Spinner(this)
-        voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voices.map { it.first })
+        voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voices.map { it.label })
         root.addView(voiceSpinner, lp())
         root.addView(TextView(this).apply { text = "VOICE SPEED" }, lp())
         speedSpinner = Spinner(this)
         speedSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, speeds.map { "${it}×" })
         speedSpinner.setSelection(speeds.indexOf(1.0f))
         root.addView(speedSpinner, lp())
-        root.addView(button("GENERATE SELECTED VOICE") { generate(voices[voiceSpinner.selectedItemPosition].second, speeds[speedSpinner.selectedItemPosition]) }, lp())
+        root.addView(button("GENERATE SELECTED VOICE") { generate(voices[voiceSpinner.selectedItemPosition].sid, speeds[speedSpinner.selectedItemPosition]) }, lp())
         root.addView(TextView(this).apply {
             text = "This manages the shared Kokoro model used by voice testing and reel export. Your selected model folder is preserved."
         }, lp())
