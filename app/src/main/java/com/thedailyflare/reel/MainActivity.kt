@@ -51,6 +51,11 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); buildUi() }
 
+    override fun onResume() {
+        super.onResume()
+        if (::voiceTts.isInitialized && ::voiceStatus.isInitialized) refreshKokoroState()
+    }
+
     private fun buildUi() {
         val scroll = ScrollView(this)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 24, 32, 32) }
@@ -86,13 +91,7 @@ class MainActivity : Activity() {
         speedSpinner.setSelection(voiceSpeeds.indexOf(1.0f))
         root.addView(speedSpinner, lp())
         voiceTts = VoiceTts(this)
-        voiceTts.initialize({ options ->
-            runOnUiThread {
-                voiceOptions = options
-                voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options.map { it.label })
-                voiceStatus.text = "Kokoro is ready locally — " + options.size + " voices available"
-            }
-        }, { error -> runOnUiThread { voiceStatus.text = error; toast(error) } })
+        refreshKokoroState()
         root.addView(button("TEST SELECTED KOKORO VOICE") { testVoice() }, lp())
         root.addView(button("OPEN KOKORO MODEL PACKAGE") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }, lp())
         root.addView(TextView(this).apply {
@@ -104,22 +103,31 @@ class MainActivity : Activity() {
         section(root, "4. MUSIC — ALL 18 SECONDS")
         root.addView(button("CHOOSE MUSIC") { pickAudio() }, lp())
         musicLabel = label("No music selected"); root.addView(musicLabel, lp())
-        root.addView(TextView(this).apply { text = "The export is exactly 18 seconds: 15 seconds of the main image with the heading and 7 subheadings, followed by 3 seconds of the CTA image. The finished video is saved to Movies/Daily Flare Reel."; textSize = 14f; setPadding(0, 12, 0, 12) }, lp())
+        root.addView(TextView(this).apply { text = "The export is exactly 18 seconds: 15 seconds of the main image with the heading and 7 subheadings, followed by 3 seconds of the CTA image. Background music is mixed at 15% volume under the Kokoro narration. The finished video is saved to Movies/Daily Flare Reel."; textSize = 14f; setPadding(0, 12, 0, 12) }, lp())
         exportStatus = label("Ready to export")
         root.addView(exportStatus, lp())
         exportProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0 }
         root.addView(exportProgress, lp())
         root.addView(button("EXPORT REEL") { exportReel() }, lp())
 
-        section(root, "5. KOKORO MODEL PACKAGE")
-        root.addView(button("MANAGE KOKORO MODEL PACKAGE") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }, lp())
-        root.addView(TextView(this).apply {
-            text = "The model package is stored locally after import and is shared with the main reel voice system."
-            textSize = 14f
-            setPadding(0, 4, 0, 12)
-        }, lp())
 
         setContentView(scroll)
+    }
+
+    private fun refreshKokoroState() {
+        voiceTts.initialize({ options ->
+            runOnUiThread {
+                voiceOptions = options
+                voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options.map { it.label })
+                voiceStatus.text = "Kokoro is ready locally — " + options.size + " voices available"
+            }
+        }, { error ->
+            runOnUiThread {
+                voiceOptions = emptyList()
+                voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, emptyList<String>())
+                voiceStatus.text = error
+            }
+        })
     }
 
     private fun section(root: LinearLayout, value: String) { root.addView(TextView(this).apply { text = value; textSize = 18f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 16, 0, 6) }, lp()) }
@@ -288,7 +296,7 @@ class MainActivity : Activity() {
                 runOnUiThread { exportProgress.progress = 82; exportStatus.text = "Generating CTA voice..." }
                 val ctaLatch = CountDownLatch(1)
                 var ctaOk = false
-                voiceTts.speakToFile("FOLLOW US ON SOCIAL MEDIA", selectedVoice, ctaVoice, selectedSpeed) { ok, _ -> ctaOk = ok; ctaLatch.countDown() }
+                voiceTts.speakToFile("FOLLOW THE DAILY FLARE ON SOCIAL MEDIA.", selectedVoice, ctaVoice, selectedSpeed) { ok, _ -> ctaOk = ok; ctaLatch.countDown() }
                 if (!ctaLatch.await(30, TimeUnit.SECONDS) || !ctaOk || !ctaVoice.exists() || ctaVoice.length() == 0L) throw IllegalStateException("CTA voice generation failed")
                 runOnUiThread { exportProgress.progress = 88; exportStatus.text = "Mixing voice and music..." }
                 if (!AudioTranscoder(this).transcodeMixed(music, voice, audio, ctaVoice) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Voice and music could not be mixed")
