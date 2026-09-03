@@ -11,14 +11,21 @@ import kotlin.concurrent.thread
 
 class VoiceTts(context: Context) {
     data class VoiceOption(val name: String, val label: String, val sid: Int)
+
+    companion object {
+        // Single source of truth for the Kokoro voice/SID mapping. Both the
+        // package test screen and the main reel screen must use these exact IDs.
+        val AVAILABLE_VOICES = listOf(
+            VoiceOption("Bella", "Bella", 1), VoiceOption("Sarah", "Sarah", 2),
+            VoiceOption("Nicole", "Nicole", 3), VoiceOption("Sky", "Sky", 4),
+            VoiceOption("Adam", "Adam", 5), VoiceOption("Michael", "Michael", 6),
+            VoiceOption("Emma", "Emma", 7), VoiceOption("Isabella", "Isabella", 8),
+            VoiceOption("George", "George", 9), VoiceOption("Lewis", "Lewis", 10)
+        )
+    }
+
     private val appContext = context.applicationContext
-    private val voices = listOf(
-        VoiceOption("Bella", "Bella", 1), VoiceOption("Sarah", "Sarah", 2),
-        VoiceOption("Nicole", "Nicole", 3), VoiceOption("Sky", "Sky", 4),
-        VoiceOption("Adam", "Adam", 5), VoiceOption("Michael", "Michael", 6),
-        VoiceOption("Emma", "Emma", 7), VoiceOption("Isabella", "Isabella", 8),
-        VoiceOption("George", "George", 9), VoiceOption("Lewis", "Lewis", 10)
-    )
+    private val voices = AVAILABLE_VOICES
 
     fun initialize(onReady: (List<VoiceOption>) -> Unit, onError: (String) -> Unit) {
         if (findPackageRoot(File(appContext.filesDir, "kokoro")) == null) {
@@ -26,10 +33,9 @@ class VoiceTts(context: Context) {
         } else onReady(voices)
     }
 
-    fun speakToFile(text: String, voiceName: String?, output: File, speed: Float = 1.0f, onDone: (Boolean, Long) -> Unit) {
+    fun speakToFile(text: String, voice: VoiceOption?, output: File, speed: Float = 1.0f, onDone: (Boolean, Long) -> Unit) {
         val packageRoot = findPackageRoot(File(appContext.filesDir, "kokoro"))
-        if (packageRoot == null) { onDone(false, 0L); return }
-        val voice = voices.firstOrNull { it.name == voiceName } ?: voices.first()
+        if (packageRoot == null || voice == null) { onDone(false, 0L); return }
         thread(name = "kokoro-voice-generation") {
             var engine: OfflineTts? = null
             try {
