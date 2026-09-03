@@ -12,7 +12,7 @@ import android.view.Surface
 import androidx.media3.common.util.UnstableApi
 import java.io.File
 
-/** Renders one continuous 18-second video: 15s news with zoom and progressive text, then 3s CTA. */
+/** Renders a narration-length news reel followed by a 3-second CTA. */
 @UnstableApi
 class ReelEncoder(private val context: Context) {
     interface Drain { fun onFrame(frame: Int) {} }
@@ -31,7 +31,8 @@ class ReelEncoder(private val context: Context) {
         val width = 1080
         val height = 1920
         val fps = 30
-        val mainFrames = 15 * fps
+        // Narration controls the reel length. Never force variable text into 15 seconds.
+        val mainFrames = (((voiceDurationMs.coerceAtLeast(1L) + 999L) / 1000L) * fps).toInt().coerceAtLeast(fps)
         val ctaFrames = 3 * fps
         val totalFrames = mainFrames + ctaFrames
 
@@ -70,9 +71,9 @@ class ReelEncoder(private val context: Context) {
         val height = 1920
         // Keep the headline immediate, but reveal the body across the actual
         // narration length instead of a fixed three-second animation.
-        val titleDelayFrames = ((titleSpeechMs.coerceIn(0L, 15_000L) / 1000f) * fps).toInt()
+        val titleDelayFrames = ((titleSpeechMs.coerceIn(0L, voiceDurationMs.coerceAtLeast(0L)) / 1000f) * fps).toInt()
         val narrationFrames = if (voiceDurationMs > 0L) {
-            (((voiceDurationMs - titleSpeechMs).coerceAtLeast(1L).coerceAtMost(15_000L) / 1000f) * fps).toInt()
+            (((voiceDurationMs - titleSpeechMs).coerceAtLeast(1L) / 1000f) * fps).toInt()
         } else {
             3 * fps
         }
