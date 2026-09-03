@@ -155,7 +155,7 @@ class AudioTranscoder(private val context: Context) {
                             val input = decoder.getInputBuffer(index) ?: return null
                             input.clear()
                             val pts = extractor.sampleTime
-                            if (pts < 0L || pts >= MAX_US) {
+                            if (pts < 0L) {
                                 decoder.queueInputBuffer(index, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                                 inputDone = true
                             } else {
