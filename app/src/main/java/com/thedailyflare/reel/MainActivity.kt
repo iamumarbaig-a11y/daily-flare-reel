@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.MediaPlayer
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -172,6 +173,18 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun getAudioDurationMs(file: File): Long {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(file.absolutePath)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        } catch (_: Exception) {
+            0L
+        } finally {
+            try { retriever.release() } catch (_: Exception) { }
+        }
+    }
+
     private fun playVoiceFile(file: File) {
         try {
             voicePlayer?.release()
@@ -227,7 +240,11 @@ class MainActivity : Activity() {
                     throw IllegalStateException("Voice generation failed")
                 }
 
-                ReelEncoder(this).encode(bg, cta, title, headlines, video)
+                val voiceDurationMs = getAudioDurationMs(voice)
+                val spokenWords = speechText.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+                val titleWords = title.trim().split(Regex("\\s+")).count { it.isNotBlank() }
+                val titleSpeechMs = if (spokenWords.isNotEmpty()) voiceDurationMs * titleWords / spokenWords.size else 0L
+                ReelEncoder(this).encode(bg, cta, title, headlines, voiceDurationMs, titleSpeechMs, video)
                 if (!video.exists() || video.length() == 0L) throw IllegalStateException("Video rendering produced no output")
                 if (!AudioTranscoder(this).transcodeMixed(music, voice, audio) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Voice and music could not be mixed")
                 if (!AudioMuxer().mux(video, audio, output) || !output.exists() || output.length() == 0L) throw IllegalStateException("Audio/video muxing failed")
