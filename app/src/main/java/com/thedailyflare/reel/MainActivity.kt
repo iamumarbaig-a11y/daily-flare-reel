@@ -24,6 +24,8 @@ import android.widget.Toast
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
 import kotlin.concurrent.thread
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class MainActivity : Activity() {
     private lateinit var preview: ReelPreviewView
@@ -202,12 +204,32 @@ class MainActivity : Activity() {
         thread(name = "daily-flare-export") {
             try {
                 val video = File(cacheDir, "daily_flare_video.mp4")
-                val audio = File(cacheDir, "daily_flare_audio_aac.mp4")
+                val voice = File(cacheDir, "daily_flare_export_voice.wav")
+                val audio = File(cacheDir, "daily_flare_mixed_audio_aac.mp4")
                 val output = File(cacheDir, "daily_flare_reel_18s.mp4")
-                video.delete(); audio.delete(); output.delete()
+                video.delete(); voice.delete(); audio.delete(); output.delete()
+
+                val speechParts = mutableListOf<String>()
+                if (title.isNotBlank()) speechParts.add(title)
+                headlines.filter { it.isNotBlank() }.forEach { speechParts.add(it) }
+                val speechText = speechParts.joinToString(". ")
+                if (speechText.isBlank()) throw IllegalStateException("Enter a heading or subheading for the voice")
+
+                val selectedVoice = voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?.name
+                val voiceLatch = CountDownLatch(1)
+                var voiceOk = false
+                if (!::voiceTts.isInitialized) throw IllegalStateException("Android TTS is not ready")
+                voiceTts.speakToFile(speechText, selectedVoice, voice) { ok, _ ->
+                    voiceOk = ok
+                    voiceLatch.countDown()
+                }
+                if (!voiceLatch.await(60, TimeUnit.SECONDS) || !voiceOk || !voice.exists() || voice.length() == 0L) {
+                    throw IllegalStateException("Voice generation failed")
+                }
+
                 ReelEncoder(this).encode(bg, cta, title, headlines, video)
                 if (!video.exists() || video.length() == 0L) throw IllegalStateException("Video rendering produced no output")
-                if (!AudioTranscoder(this).transcode(music, audio) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Music could not be converted to AAC")
+                if (!AudioTranscoder(this).transcodeMixed(music, voice, audio) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Voice and music could not be mixed")
                 if (!AudioMuxer().mux(video, audio, output) || !output.exists() || output.length() == 0L) throw IllegalStateException("Audio/video muxing failed")
                 val saved = saveToGallery(output)
                 runOnUiThread { toast(if (saved) "Export complete: saved to Movies/Daily Flare Reel" else "Export completed but could not save to gallery") }
