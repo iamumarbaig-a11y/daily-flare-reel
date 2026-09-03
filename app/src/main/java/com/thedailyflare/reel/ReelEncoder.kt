@@ -22,7 +22,8 @@ class ReelEncoder(private val context: Context) {
         ctaBitmap: Bitmap,
         title: String,
         headlines: List<String>,
-        voiceDurationMs: Long = 0L,
+        voiceDurationMs: Long,
+        titleSpeechMs: Long,
         output: File,
         drain: Drain? = null
     ) {
@@ -42,6 +43,7 @@ class ReelEncoder(private val context: Context) {
             headlines,
             bodyWordCount,
             voiceDurationMs,
+            titleSpeechMs,
             mainFrames,
             totalFrames,
             fps,
@@ -57,6 +59,7 @@ class ReelEncoder(private val context: Context) {
         headlines: List<String>,
         bodyWordCount: Int,
         voiceDurationMs: Long,
+        titleSpeechMs: Long,
         mainFrames: Int,
         totalFrames: Int,
         fps: Int,
@@ -67,12 +70,13 @@ class ReelEncoder(private val context: Context) {
         val height = 1920
         // Keep the headline immediate, but reveal the body across the actual
         // narration length instead of a fixed three-second animation.
+        val titleDelayFrames = ((titleSpeechMs.coerceIn(0L, 15_000L) / 1000f) * fps).toInt()
         val narrationFrames = if (voiceDurationMs > 0L) {
-            ((voiceDurationMs.coerceAtMost(15_000L) / 1000f) * fps).toInt()
+            (((voiceDurationMs - titleSpeechMs).coerceAtLeast(1L).coerceAtMost(15_000L) / 1000f) * fps).toInt()
         } else {
             3 * fps
         }
-        val revealFrames = narrationFrames.coerceIn(1, mainFrames)
+        val revealFrames = narrationFrames.coerceIn(1, mainFrames - titleDelayFrames.coerceAtMost(mainFrames - 1))
 
         val format = MediaFormat.createVideoFormat("video/avc", width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
@@ -117,7 +121,7 @@ class ReelEncoder(private val context: Context) {
                             0
                         } else {
                             val revealProgress =
-                                ((frame + 1).toFloat() / revealFrames.toFloat()).coerceIn(0f, 1f)
+                                ((frame - titleDelayFrames + 1).toFloat() / revealFrames.toFloat()).coerceIn(0f, 1f)
                             kotlin.math.ceil(bodyWordCount * revealProgress).toInt()
                         }
 
