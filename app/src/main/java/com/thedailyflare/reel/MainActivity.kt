@@ -35,7 +35,9 @@ class MainActivity : Activity() {
     private lateinit var ctaImageLabel: TextView
     private lateinit var musicLabel: TextView
     private lateinit var voiceSpinner: Spinner
+    private lateinit var speedSpinner: Spinner
     private lateinit var voiceTts: VoiceTts
+    private val voiceSpeeds = listOf(0.75f, 0.9f, 1.0f, 1.1f, 1.25f, 1.5f)
     private lateinit var voiceStatus: TextView
     private lateinit var exportStatus: TextView
     private lateinit var exportProgress: ProgressBar
@@ -72,24 +74,29 @@ class MainActivity : Activity() {
         section(root, "2. 3-SECOND CTA IMAGE")
         root.addView(button("CHOOSE CTA IMAGE") { pickImage(101) }, lp())
         ctaImageLabel = label("No CTA image selected"); root.addView(ctaImageLabel, lp())
-        section(root, "3. TEST ANDROID TTS VOICE")
-        voiceStatus = label("Loading voices...")
+        section(root, "3. KOKORO AI VOICE")
+        voiceStatus = label("Checking local Kokoro package...")
         root.addView(voiceStatus, lp())
+        root.addView(TextView(this).apply { text = "VOICE"; textSize = 14f }, lp())
         voiceSpinner = Spinner(this)
         root.addView(voiceSpinner, lp())
+        root.addView(TextView(this).apply { text = "VOICE SPEED"; textSize = 14f }, lp())
+        speedSpinner = Spinner(this)
+        speedSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceSpeeds.map { it.toString() + "×" })
+        speedSpinner.setSelection(voiceSpeeds.indexOf(1.0f))
+        root.addView(speedSpinner, lp())
         voiceTts = VoiceTts(this)
         voiceTts.initialize({ options ->
             runOnUiThread {
                 voiceOptions = options
                 voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options.map { it.label })
-                voiceStatus.text = if (options.isEmpty()) "No English voices available in the active Android TTS engine" else options.size.toString() + " English voice(s) available"
-                if (options.isEmpty()) toast("No English Android TTS voices found")
+                voiceStatus.text = "Kokoro is ready locally — " + options.size + " voices available"
             }
         }, { error -> runOnUiThread { voiceStatus.text = error; toast(error) } })
-        root.addView(button("TEST SELECTED VOICE") { testVoice() }, lp())
-        root.addView(button("OPEN ANDROID VOICE SETTINGS") { openVoiceSettings() }, lp())
+        root.addView(button("TEST SELECTED KOKORO VOICE") { testVoice() }, lp())
+        root.addView(button("OPEN KOKORO MODEL PACKAGE") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }, lp())
         root.addView(TextView(this).apply {
-            text = "Test Selected Voice now plays the generated speech aloud. If only one voice appears, use Android Voice Settings to download or enable more voices."
+            text = "Kokoro now replaces Android TTS for voice testing and reel export. The previously imported model folder is reused and not reset."
             textSize = 14f
             setPadding(0, 4, 0, 12)
         }, lp())
@@ -104,12 +111,10 @@ class MainActivity : Activity() {
         root.addView(exportProgress, lp())
         root.addView(button("EXPORT REEL") { exportReel() }, lp())
 
-        section(root, "5. KOKORO AI VOICE — EXPERIMENTAL")
-        root.addView(button("OPEN KOKORO OFFLINE VOICE TEST") {
-            startActivity(Intent(this, KokoroExperimentActivity::class.java))
-        }, lp())
+        section(root, "5. KOKORO MODEL PACKAGE")
+        root.addView(button("MANAGE KOKORO MODEL PACKAGE") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }, lp())
         root.addView(TextView(this).apply {
-            text = "Experimental and isolated: this does not change the working Android TTS or reel export."
+            text = "The model package is stored locally after import and is shared with the main reel voice system."
             textSize = 14f
             setPadding(0, 4, 0, 12)
         }, lp())
@@ -179,13 +184,14 @@ class MainActivity : Activity() {
         if (speechText.isBlank()) return toast("Enter a heading or subheading first")
         toast("Generating and playing voice...")
         val output = File(cacheDir, "daily_flare_voice.wav")
-        voiceTts.speakToFile(speechText, selected, output) { ok, duration ->
+        val selectedSpeed = voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition) { 1.0f }
+        voiceTts.speakToFile(speechText, selected, output, selectedSpeed) { ok, duration ->
             runOnUiThread {
                 if (!ok) {
                     toast("Voice generation failed")
                 } else {
                     playVoiceFile(output)
-                    toast("Playing selected voice: " + duration + " ms")
+                    toast("Playing Kokoro voice at " + selectedSpeed + "×: " + duration + " ms")
                 }
             }
         }
@@ -250,13 +256,14 @@ class MainActivity : Activity() {
                 val selectedVoice = voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?.name
                 val voiceLatch = CountDownLatch(1)
                 var voiceOk = false
-                if (!::voiceTts.isInitialized) throw IllegalStateException("Android TTS is not ready")
-                voiceTts.speakToFile(speechText, selectedVoice, voice) { ok, _ ->
+                if (!::voiceTts.isInitialized) throw IllegalStateException("Kokoro voice service is not ready")
+                val selectedSpeed = voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition) { 1.0f }
+                voiceTts.speakToFile(speechText, selectedVoice, voice, selectedSpeed) { ok, _ ->
                     voiceOk = ok
                     voiceLatch.countDown()
                 }
                 if (!voiceLatch.await(60, TimeUnit.SECONDS) || !voiceOk || !voice.exists() || voice.length() == 0L) {
-                    throw IllegalStateException("Voice generation failed")
+                    throw IllegalStateException("Kokoro voice generation failed")
                 }
 
                 val voiceDurationMs = getAudioDurationMs(voice)
@@ -281,7 +288,7 @@ class MainActivity : Activity() {
                 runOnUiThread { exportProgress.progress = 82; exportStatus.text = "Generating CTA voice..." }
                 val ctaLatch = CountDownLatch(1)
                 var ctaOk = false
-                voiceTts.speakToFile("FOLLOW US ON SOCIAL MEDIA", selectedVoice, ctaVoice) { ok, _ -> ctaOk = ok; ctaLatch.countDown() }
+                voiceTts.speakToFile("FOLLOW US ON SOCIAL MEDIA", selectedVoice, ctaVoice, selectedSpeed) { ok, _ -> ctaOk = ok; ctaLatch.countDown() }
                 if (!ctaLatch.await(30, TimeUnit.SECONDS) || !ctaOk || !ctaVoice.exists() || ctaVoice.length() == 0L) throw IllegalStateException("CTA voice generation failed")
                 runOnUiThread { exportProgress.progress = 88; exportStatus.text = "Mixing voice and music..." }
                 if (!AudioTranscoder(this).transcodeMixed(music, voice, audio, ctaVoice) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Voice and music could not be mixed")
