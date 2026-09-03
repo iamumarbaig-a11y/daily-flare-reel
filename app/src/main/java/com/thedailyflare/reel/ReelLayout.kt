@@ -43,20 +43,41 @@ object ReelLayout {
     }
 
     fun draw(canvas: Canvas, title: String, headlines: List<String>, width: Int, height: Int) =
-        draw(canvas, title, headlines, width, height, null, false)
+        draw(canvas, title, headlines, width, height, null, false, 0)
 
-    fun draw(canvas: Canvas, title: String, headlines: List<String>, width: Int, height: Int,
-             ctaBitmap: Bitmap?, showCta: Boolean) {
+    fun draw(
+        canvas: Canvas,
+        title: String,
+        headlines: List<String>,
+        width: Int,
+        height: Int,
+        ctaBitmap: Bitmap?,
+        showCta: Boolean
+    ) = draw(canvas, title, headlines, width, height, ctaBitmap, showCta, Int.MAX_VALUE)
+
+    fun draw(
+        canvas: Canvas,
+        title: String,
+        headlines: List<String>,
+        width: Int,
+        height: Int,
+        ctaBitmap: Bitmap?,
+        showCta: Boolean,
+        visibleBodyWords: Int
+    ) {
         canvas.save()
         canvas.scale(width / W, height / H)
         if (showCta && ctaBitmap != null) drawCover(canvas, ctaBitmap, W.toInt(), H.toInt())
-        else drawNews(canvas, title, headlines)
+        else drawNews(canvas, title, headlines, visibleBodyWords)
         canvas.restore()
     }
 
-    private fun drawNews(canvas: Canvas, title: String, headlines: List<String>) {
-        // Compact Instagram/Reels-style typography: bold but deliberately smaller,
-        // with tight padding so the photograph remains the dominant visual.
+    private fun drawNews(
+        canvas: Canvas,
+        title: String,
+        headlines: List<String>,
+        visibleBodyWords: Int
+    ) {
         val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
             textSize = TITLE_SIZE
@@ -71,8 +92,7 @@ object ReelLayout {
 
         var y = TOP
 
-        // Main heading: one compact white pill per wrapped line. Lines belonging
-        // to the same heading nearly touch; separate content keeps the normal GAP.
+        // The main heading is always visible immediately.
         val titleMaxWidth = RIGHT - LEFT - (TITLE_PAD_X * 2f)
         val titleLines = wrap(title.ifBlank { "Main heading" }, titlePaint, titleMaxWidth)
         val titleLineHeight = titlePaint.textSize + 2f
@@ -95,19 +115,25 @@ object ReelLayout {
             y += titleBlockHeight + if (index == titleLines.lastIndex) GAP else SAME_TEXT_GAP
         }
 
-        // Keep the spacing between the heading and the first subheading unchanged.
         y += 18f
 
         val maxTextWidth = RIGHT - LEFT - TEXT_PAD_X * 2f
         val lineHeight = textPaint.textSize + 3f
         val blockHeight = lineHeight + TEXT_PAD_Y * 2f
 
-        // Every wrapped subheading line gets its own compact, text-width-sized
-        // white pill, matching the heading treatment. Only lines of the SAME
-        // subheading use -0.1 spacing; separate subheadings retain GAP.
+        // Reveal body words in their original order. A line/pill is only drawn
+        // when it contains at least one currently visible word.
+        var remainingWords = visibleBodyWords.coerceAtLeast(0)
         for (headline in headlines.take(7)) {
-            if (headline.isBlank()) continue
-            val lines = wrap(headline, textPaint, maxTextWidth)
+            if (headline.isBlank() || remainingWords <= 0) break
+
+            val words = headline.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+            val take = minOf(words.size, remainingWords)
+            if (take <= 0) break
+            val visibleText = words.take(take).joinToString(" ")
+            remainingWords -= take
+
+            val lines = wrap(visibleText, textPaint, maxTextWidth)
             for ((index, line) in lines.withIndex()) {
                 val blockWidth = minOf(
                     textPaint.measureText(line) + TEXT_PAD_X * 2f,
@@ -137,10 +163,18 @@ object ReelLayout {
                 if (word.isEmpty()) continue
                 val candidate = if (line.isEmpty()) word else "$line $word"
                 if (line.isEmpty() || paint.measureText(candidate) <= maxWidth) line = candidate
-                else { result.add(line); line = word }
+                else {
+                    result.add(line)
+                    line = word
+                }
             }
             if (line.isNotEmpty()) result.add(line)
         }
         return if (result.isEmpty()) listOf("") else result
     }
+
+    fun bodyWordCount(headlines: List<String>): Int =
+        headlines.take(7).sumOf { headline ->
+            headline.trim().split(Regex("\\s+")).count { it.isNotBlank() }
+        }
 }
