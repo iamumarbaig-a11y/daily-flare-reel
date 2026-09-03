@@ -33,5 +33,5 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: daily-flare-reel-kokoro-experimental-v34
+          name: daily-flare-reel-kokoro-experimental-v38
           path: app/build/outputs/apk/debug/*.apk
