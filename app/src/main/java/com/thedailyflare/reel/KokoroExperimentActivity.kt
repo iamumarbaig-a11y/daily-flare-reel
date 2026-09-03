@@ -21,6 +21,14 @@ class KokoroExperimentActivity : Activity() {
     private lateinit var textInput: EditText
     private var modelDir: File? = null
     private var player: MediaPlayer? = null
+    private lateinit var voiceSpinner: Spinner
+    private lateinit var speedSpinner: Spinner
+    private val voices = listOf(
+        "Bella" to 1, "Sarah" to 2, "Nicole" to 3, "Sky" to 4,
+        "Adam" to 5, "Michael" to 6, "Emma" to 7, "Isabella" to 8,
+        "George" to 9, "Lewis" to 10
+    )
+    private val speeds = listOf(0.75f, 0.9f, 1.0f, 1.1f, 1.25f, 1.5f)
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,8 +59,16 @@ class KokoroExperimentActivity : Activity() {
             minLines = 4
         }
         root.addView(textInput, lp())
-        root.addView(button("GENERATE BELLA") { generate(1) }, lp())
-        root.addView(button("GENERATE ADAM") { generate(5) }, lp())
+        root.addView(TextView(this).apply { text = "SELECT VOICE" }, lp())
+        voiceSpinner = Spinner(this)
+        voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voices.map { it.first })
+        root.addView(voiceSpinner, lp())
+        root.addView(TextView(this).apply { text = "VOICE SPEED" }, lp())
+        speedSpinner = Spinner(this)
+        speedSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, speeds.map { "${it}×" })
+        speedSpinner.setSelection(speeds.indexOf(1.0f))
+        root.addView(speedSpinner, lp())
+        root.addView(button("GENERATE SELECTED VOICE") { generate(voices[voiceSpinner.selectedItemPosition].second, speeds[speedSpinner.selectedItemPosition]) }, lp())
         root.addView(TextView(this).apply {
             text = "Experimental only. Your existing Android TTS and reel export are untouched."
         }, lp())
@@ -65,7 +81,7 @@ class KokoroExperimentActivity : Activity() {
         val existing = findPackageRoot(File(filesDir, "kokoro"))
         if (existing != null) {
             modelDir = existing
-            status.text = "Kokoro package is ready locally. Bella and Adam are available."
+            status.text = "Kokoro package is ready locally. Select a voice and speed."
         }
     }
 
@@ -119,7 +135,7 @@ class KokoroExperimentActivity : Activity() {
 
                 modelDir = packageRoot
                 runOnUiThread {
-                    status.text = "Kokoro folder imported successfully. Bella and Adam are ready."
+                    status.text = "Kokoro folder imported successfully. Select a voice and speed."
                 }
             } catch (e: Exception) {
                 File(filesDir, "kokoro").deleteRecursively()
@@ -181,7 +197,7 @@ class KokoroExperimentActivity : Activity() {
         File(dir, "tokens.txt").isFile &&
         File(dir, "espeak-ng-data").isDirectory
 
-    private fun generate(sid: Int) {
+    private fun generate(sid: Int, speed: Float = 1.0f) {
         val packageRoot = modelDir ?: findPackageRoot(File(filesDir, "kokoro"))
         if (packageRoot == null) {
             toast("Import a compatible Kokoro package first")
@@ -211,7 +227,7 @@ class KokoroExperimentActivity : Activity() {
                 val audio = engine.generate(
                     text = text,
                     sid = sid,
-                    speed = 1.0f
+                    speed = speed
                 )
 
                 if (audio.samples.isEmpty()) {
