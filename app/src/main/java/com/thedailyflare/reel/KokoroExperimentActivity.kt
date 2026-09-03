@@ -49,7 +49,7 @@ class KokoroExperimentActivity : Activity() {
         root.addView(button("CHOOSE KOKORO MODEL PACKAGE") { choosePackage() }, lp())
 
         status = TextView(this).apply {
-            text = "Select the complete kokoro-en-v0_19.tar.bz2 file."
+            text = "Select the already-extracted Kokoro model folder. The folder is reused by the main reel voice system."
             setPadding(0, 12, 0, 12)
         }
         root.addView(status, lp())
@@ -70,7 +70,7 @@ class KokoroExperimentActivity : Activity() {
         root.addView(speedSpinner, lp())
         root.addView(button("GENERATE SELECTED VOICE") { generate(voices[voiceSpinner.selectedItemPosition].second, speeds[speedSpinner.selectedItemPosition]) }, lp())
         root.addView(TextView(this).apply {
-            text = "Experimental only. Your existing Android TTS and reel export are untouched."
+            text = "This manages the shared Kokoro model used by voice testing and reel export. Your selected model folder is preserved."
         }, lp())
         setContentView(scroll)
 
