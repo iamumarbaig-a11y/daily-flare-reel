@@ -11,7 +11,10 @@ import java.io.File
 
 /** Decodes selected music and re-encodes it as AAC so MP4 muxing is reliable. */
 class AudioTranscoder(private val context: Context) {
-    companion object { private const val MAX_US = 18_000_000L }
+    companion object {
+        private const val MAX_US = 18_000_000L
+        private const val MUSIC_VOLUME = 0.20f
+    }
 
     fun transcode(uri: Uri, output: File): Boolean {
         return try {
@@ -74,6 +77,7 @@ class AudioTranscoder(private val context: Context) {
                                     buffer.limit(info.offset + info.size)
                                     val temp = ByteArray(info.size)
                                     buffer.get(temp)
+                                    scalePcm16(temp, MUSIC_VOLUME)
                                     pcm.write(temp)
                                 }
                                 decoder.releaseOutputBuffer(index, false)
@@ -92,6 +96,18 @@ class AudioTranscoder(private val context: Context) {
                 extractor.release()
             }
         } catch (_: Exception) { false }
+    }
+
+    /** PCM output from the Android decoder is 16-bit signed little-endian. */
+    private fun scalePcm16(data: ByteArray, volume: Float) {
+        var i = 0
+        while (i + 1 < data.size) {
+            val sample = ((data[i + 1].toInt() shl 8) or (data[i].toInt() and 0xFF)).toShort().toInt()
+            val scaled = (sample * volume).toInt().coerceIn(-32768, 32767)
+            data[i] = (scaled and 0xFF).toByte()
+            data[i + 1] = ((scaled shr 8) and 0xFF).toByte()
+            i += 2
+        }
     }
 
     private fun encodePcmToAac(pcm: ByteArray, sampleRate: Int, channels: Int, output: File): Boolean {
