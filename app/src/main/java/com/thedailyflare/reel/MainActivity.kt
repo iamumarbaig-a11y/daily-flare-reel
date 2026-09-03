@@ -187,7 +187,7 @@ class MainActivity : Activity() {
 
     private fun openVoiceSettings() {
         try {
-            startActivity(Intent(Settings.ACTION_TTS_SETTINGS))
+            startActivity(Intent(Settings.ACTION_TEXT_TO_SPEECH_SETTINGS))
         } catch (_: Exception) {
             toast("Android TTS settings are unavailable on this phone")
         }
