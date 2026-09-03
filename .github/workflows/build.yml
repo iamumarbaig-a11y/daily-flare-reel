@@ -23,6 +23,10 @@ jobs:
         run: |
           mkdir -p app/src/main/res/drawable-nodpi
           base64 -d baseline/daily_flare_background.jpg.b64 > app/src/main/res/drawable-nodpi/daily_flare_background.jpg
+      - name: Download official Sherpa-ONNX Android runtime
+        run: |
+          mkdir -p app/libs
+          curl -L --fail --retry 3 -o app/libs/sherpa-onnx-1.13.7.aar https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.7/sherpa-onnx-1.13.7.aar
       - name: Build debug APK
         run: gradle --version && gradle assembleDebug --stacktrace
       - name: Upload APK
