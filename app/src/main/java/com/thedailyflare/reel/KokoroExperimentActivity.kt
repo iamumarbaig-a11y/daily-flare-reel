@@ -7,11 +7,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.*
+import androidx.documentfile.provider.DocumentFile
 import com.k2fsa.sherpa.onnx.*
-import org.apache.commons.compress.archivers.tar.TarArchiveEntry
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
-import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
-import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
 
@@ -70,15 +67,15 @@ class KokoroExperimentActivity : Activity() {
     }
 
     private fun choosePackage() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "*/*"
-            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
-                "application/x-bzip2",
-                "application/x-bzip",
-                "application/octet-stream"
-            ))
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        // Return to the original workflow: select the already-extracted Kokoro
+        // folder. Android grants access to the folder and we copy its exact
+        // structure without unpacking or rewriting model files.
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            )
         }
         startActivityForResult(intent, REQUEST_PACKAGE)
     }
@@ -88,17 +85,21 @@ class KokoroExperimentActivity : Activity() {
         if (requestCode != REQUEST_PACKAGE || resultCode != RESULT_OK || data?.data == null) return
 
         val uri = data.data!!
-        status.text = "Importing Kokoro package..."
+        status.text = "Importing Kokoro folder..."
 
         Thread {
             try {
-                val grantedFlags = data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION
-                if (grantedFlags != 0) {
-                    try {
-                        contentResolver.takePersistableUriPermission(uri, grantedFlags)
-                    } catch (_: SecurityException) {
-                    }
+                val grantedFlags = data.flags and
+                    (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                try {
+                    contentResolver.takePersistableUriPermission(uri, grantedFlags)
+                } catch (_: SecurityException) {
+                    // Some file managers do not expose persistable permissions.
+                    // The current grant is still enough for this one-time import.
                 }
+
+                val source = DocumentFile.fromTreeUri(this, uri)
+                    ?: throw IllegalStateException("Android could not open the selected folder")
 
                 val destination = File(filesDir, "kokoro")
                 destination.deleteRecursively()
@@ -106,24 +107,16 @@ class KokoroExperimentActivity : Activity() {
                     throw IllegalStateException("Cannot create local Kokoro storage")
                 }
 
-                val importedEntries = extractTarBz2(uri, destination)
-                if (importedEntries == 0) {
-                    throw IllegalStateException("The selected file contained no readable TAR entries.")
-                }
+                copyDocumentTree(source, destination)
 
                 val packageRoot = findPackageRoot(destination)
                     ?: throw IllegalStateException(
-                        "Extraction finished, but the required Kokoro files were not found."
+                        "Required files were not found. Select the extracted folder containing model.onnx, voices.bin, tokens.txt and espeak-ng-data."
                     )
 
-                // Do not create the native OfflineTts object here. The previous build
-                // created it on the import thread and used it later on another thread.
-                // Each generation now creates and uses the native engine on the same
-                // worker thread, avoiding cross-thread native runtime state.
                 modelDir = packageRoot
-
                 runOnUiThread {
-                    status.text = "Kokoro is ready locally. Bella and Adam are now available."
+                    status.text = "Kokoro folder imported successfully. Bella and Adam are ready."
                 }
             } catch (e: Exception) {
                 File(filesDir, "kokoro").deleteRecursively()
@@ -132,6 +125,23 @@ class KokoroExperimentActivity : Activity() {
                 }
             }
         }.start()
+    }
+
+    private fun copyDocumentTree(source: DocumentFile, destination: File) {
+        for (child in source.listFiles()) {
+            val name = child.name?.takeIf { it.isNotBlank() } ?: continue
+            val target = File(destination, name)
+            if (child.isDirectory) {
+                if (!target.exists() && !target.mkdirs()) {
+                    throw IllegalStateException("Cannot create folder $name")
+                }
+                copyDocumentTree(child, target)
+            } else if (child.isFile) {
+                contentResolver.openInputStream(child.uri)?.use { input ->
+                    FileOutputStream(target).use { output -> input.copyTo(output) }
+                } ?: throw IllegalStateException("Cannot read $name")
+            }
+        }
     }
 
     private fun createEngine(packageRoot: File): OfflineTts {
@@ -151,68 +161,6 @@ class KokoroExperimentActivity : Activity() {
             )
         )
         return OfflineTts(config = config)
-    }
-
-    private fun extractTarBz2(uri: Uri, destination: File): Int {
-        contentResolver.openInputStream(uri)?.use { raw ->
-            BufferedInputStream(raw).use { buffered ->
-                buffered.mark(4)
-                val b0 = buffered.read()
-                val b1 = buffered.read()
-                val b2 = buffered.read()
-                buffered.reset()
-                if (b0 != 'B'.code || b1 != 'Z'.code || b2 != 'h'.code) {
-                    throw IllegalArgumentException(
-                        "This is not a .tar.bz2 Kokoro archive."
-                    )
-                }
-
-                BZip2CompressorInputStream(buffered, true).use { bz2 ->
-                    TarArchiveInputStream(bz2).use { tar ->
-                        var entries = 0
-                        while (true) {
-                            val current: TarArchiveEntry = tar.nextTarEntry ?: break
-                            entries++
-
-                            val entryName = current.name
-                                .replace('\\', '/')
-                                .removePrefix("./")
-                            if (entryName.isBlank()) continue
-
-                            val target = safeTarget(destination, entryName)
-                            when {
-                                current.isDirectory -> {
-                                    if (!target.exists() && !target.mkdirs()) {
-                                        throw IllegalStateException("Cannot create $entryName")
-                                    }
-                                }
-                                current.isFile -> {
-                                    target.parentFile?.let { parent ->
-                                        if (!parent.exists() && !parent.mkdirs()) {
-                                            throw IllegalStateException("Cannot create folder for $entryName")
-                                        }
-                                    }
-                                    FileOutputStream(target).use { output ->
-                                        tar.copyTo(output)
-                                    }
-                                }
-                            }
-                        }
-                        return entries
-                    }
-                }
-            }
-        } ?: throw IllegalStateException("Cannot read the selected package")
-    }
-
-    private fun safeTarget(destination: File, entryName: String): File {
-        val target = File(destination, entryName)
-        val rootPath = destination.canonicalFile
-        val targetPath = target.canonicalFile
-        if (targetPath != rootPath && !targetPath.path.startsWith(rootPath.path + File.separator)) {
-            throw SecurityException("Unsafe archive entry: $entryName")
-        }
-        return targetPath
     }
 
     private fun findPackageRoot(root: File): File? {
