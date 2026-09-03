@@ -3,6 +3,7 @@ package com.thedailyflare.reel
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -11,7 +12,7 @@ import android.view.Surface
 import androidx.media3.common.util.UnstableApi
 import java.io.File
 
-/** Renders one continuous 18-second video: 15s news, then 3s CTA image. */
+/** Renders one continuous 18-second video: 15s news with subtle zoom, then 3s CTA image. */
 @UnstableApi
 class ReelEncoder(private val context: Context) {
     interface Drain { fun onFrame(frame: Int) {} }
@@ -32,31 +33,22 @@ class ReelEncoder(private val context: Context) {
         val ctaFrames = 3 * fps
         val totalFrames = mainFrames + ctaFrames
 
-        // Render the two static scenes once. Previously ReelLayout measured/wrapped
-        // and drew all text on every frame. On text-heavy reels that could take longer
-        // than one 33.3ms frame interval, so the surface timestamps drifted and the
-        // final CTA frames were pushed beyond the 18s output. Cached bitmaps make each
-        // submitted frame a single fast blit.
-        val mainFrame = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val ctaFrame = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        // Cache the text overlay once. Only the photograph moves underneath it.
+        val textOverlay = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         try {
-            Canvas(mainFrame).apply {
-                ReelLayout.drawCover(this, background, width, height)
+            Canvas(textOverlay).apply {
                 ReelLayout.draw(this, title, headlines, width, height, null, false)
             }
-            Canvas(ctaFrame).apply {
-                ReelLayout.drawCover(this, ctaBitmap, width, height)
-            }
-            encodeFrames(mainFrame, ctaFrame, mainFrames, totalFrames, fps, output, drain)
+            encodeFrames(background, ctaBitmap, textOverlay, mainFrames, totalFrames, fps, output, drain)
         } finally {
-            mainFrame.recycle()
-            ctaFrame.recycle()
+            textOverlay.recycle()
         }
     }
 
     private fun encodeFrames(
-        mainFrame: Bitmap,
-        ctaFrame: Bitmap,
+        background: Bitmap,
+        ctaBitmap: Bitmap,
+        textOverlay: Bitmap,
         mainFrames: Int,
         totalFrames: Int,
         fps: Int,
@@ -86,8 +78,6 @@ class ReelEncoder(private val context: Context) {
             codec.start()
 
             for (frame in 0 until totalFrames) {
-                // Pace from an absolute timeline. Cached rendering is fast enough that
-                // this maintains ~30fps without accumulating text-rendering delays.
                 val waitNs = nextFrameNs - System.nanoTime()
                 if (waitNs > 0L) {
                     val millis = waitNs / 1_000_000L
@@ -98,7 +88,14 @@ class ReelEncoder(private val context: Context) {
 
                 val canvas = surface.lockCanvas(null)
                 try {
-                    canvas.drawBitmap(if (frame < mainFrames) mainFrame else ctaFrame, 0f, 0f, null)
+                    if (frame < mainFrames) {
+                        // Gentle Ken Burns zoom: 1.00x -> 1.10x across the 15-second news scene.
+                        val progress = frame.toFloat() / (mainFrames - 1).coerceAtLeast(1)
+                        drawZoomedCover(canvas, background, width, height, 1f + 0.10f * progress)
+                        canvas.drawBitmap(textOverlay, 0f, 0f, null)
+                    } else {
+                        ReelLayout.drawCover(canvas, ctaBitmap, width, height)
+                    }
                 } finally {
                     surface.unlockCanvasAndPost(canvas)
                 }
@@ -164,5 +161,39 @@ class ReelEncoder(private val context: Context) {
             codec.release()
         }
         require(output.exists() && output.length() > 0L) { "18-second video produced no output" }
+    }
+
+    private fun drawZoomedCover(
+        canvas: Canvas,
+        bitmap: Bitmap,
+        width: Int,
+        height: Int,
+        zoom: Float
+    ) {
+        if (bitmap.width <= 0 || bitmap.height <= 0) return
+
+        val targetRatio = width.toFloat() / height.toFloat()
+        val sourceRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+        var cropWidth: Float
+        var cropHeight: Float
+
+        if (sourceRatio > targetRatio) {
+            cropHeight = bitmap.height.toFloat()
+            cropWidth = cropHeight * targetRatio
+        } else {
+            cropWidth = bitmap.width.toFloat()
+            cropHeight = cropWidth / targetRatio
+        }
+
+        cropWidth /= zoom
+        cropHeight /= zoom
+
+        // Keep the crop centered so the movement stays subtle and professional.
+        val left = ((bitmap.width - cropWidth) / 2f).toInt().coerceAtLeast(0)
+        val top = ((bitmap.height - cropHeight) / 2f).toInt().coerceAtLeast(0)
+        val right = (left + cropWidth.toInt()).coerceAtMost(bitmap.width)
+        val bottom = (top + cropHeight.toInt()).coerceAtMost(bitmap.height)
+
+        canvas.drawBitmap(bitmap, Rect(left, top, right, bottom), Rect(0, 0, width, height), null)
     }
 }
