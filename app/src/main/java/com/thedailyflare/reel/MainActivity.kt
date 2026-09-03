@@ -103,6 +103,17 @@ class MainActivity : Activity() {
         exportProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0 }
         root.addView(exportProgress, lp())
         root.addView(button("EXPORT REEL") { exportReel() }, lp())
+
+        section(root, "5. KOKORO AI VOICE — EXPERIMENTAL")
+        root.addView(button("OPEN KOKORO OFFLINE VOICE TEST") {
+            startActivity(Intent(this, KokoroExperimentActivity::class.java))
+        }, lp())
+        root.addView(TextView(this).apply {
+            text = "Experimental and isolated: this does not change the working Android TTS or reel export."
+            textSize = 14f
+            setPadding(0, 4, 0, 12)
+        }, lp())
+
         setContentView(scroll)
     }
 
