@@ -14,7 +14,7 @@ import kotlin.math.floor
 class AudioTranscoder(private val context: Context) {
     companion object {
         private const val MAX_US = 18_000_000L
-        private const val MUSIC_VOLUME = 0.20f
+        private const val MUSIC_VOLUME = 0.15f
     }
 
     fun transcode(uri: Uri, output: File): Boolean {
