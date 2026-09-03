@@ -22,6 +22,7 @@ class ReelEncoder(private val context: Context) {
         ctaBitmap: Bitmap,
         title: String,
         headlines: List<String>,
+        voiceDurationMs: Long = 0L,
         output: File,
         drain: Drain? = null
     ) {
@@ -40,6 +41,7 @@ class ReelEncoder(private val context: Context) {
             title,
             headlines,
             bodyWordCount,
+            voiceDurationMs,
             mainFrames,
             totalFrames,
             fps,
@@ -54,6 +56,7 @@ class ReelEncoder(private val context: Context) {
         title: String,
         headlines: List<String>,
         bodyWordCount: Int,
+        voiceDurationMs: Long,
         mainFrames: Int,
         totalFrames: Int,
         fps: Int,
@@ -62,8 +65,14 @@ class ReelEncoder(private val context: Context) {
     ) {
         val width = 1080
         val height = 1920
-        // The entire body becomes available within the first 3 seconds.
-        val revealFrames = minOf(mainFrames, 3 * fps)
+        // Keep the headline immediate, but reveal the body across the actual
+        // narration length instead of a fixed three-second animation.
+        val narrationFrames = if (voiceDurationMs > 0L) {
+            ((voiceDurationMs.coerceAtMost(15_000L) / 1000f) * fps).toInt()
+        } else {
+            3 * fps
+        }
+        val revealFrames = narrationFrames.coerceIn(1, mainFrames)
 
         val format = MediaFormat.createVideoFormat("video/avc", width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
@@ -101,8 +110,9 @@ class ReelEncoder(private val context: Context) {
                         val smoothProgress = progress * progress * (3f - 2f * progress)
                         drawZoomedCover(canvas, background, width, height, 1f + 0.18f * smoothProgress)
 
-                        // Title is immediate. Body words reveal progressively and all
-                        // become visible by three seconds regardless of article length.
+                        // Title is immediate. The body reveal follows the measured
+                        // narration duration, giving the reader a visual pace close
+                        // to the selected TTS voice.
                         val visibleWords = if (bodyWordCount == 0) {
                             0
                         } else {
