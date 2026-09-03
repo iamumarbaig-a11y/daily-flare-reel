@@ -3,7 +3,7 @@ package com.thedailyflare.reel
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Rect
+import android.graphics.RectF
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -12,7 +12,7 @@ import android.view.Surface
 import androidx.media3.common.util.UnstableApi
 import java.io.File
 
-/** Renders one continuous 18-second video: 15s news with subtle zoom, then 3s CTA image. */
+/** Renders one continuous 18-second video: 15s news with smooth zoom, then 3s CTA image. */
 @UnstableApi
 class ReelEncoder(private val context: Context) {
     interface Drain { fun onFrame(frame: Int) {} }
@@ -33,7 +33,6 @@ class ReelEncoder(private val context: Context) {
         val ctaFrames = 3 * fps
         val totalFrames = mainFrames + ctaFrames
 
-        // Cache the text overlay once. Only the photograph moves underneath it.
         val textOverlay = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         try {
             Canvas(textOverlay).apply {
@@ -89,9 +88,11 @@ class ReelEncoder(private val context: Context) {
                 val canvas = surface.lockCanvas(null)
                 try {
                     if (frame < mainFrames) {
-                        // Gentle Ken Burns zoom: 1.00x -> 1.10x across the 15-second news scene.
                         val progress = frame.toFloat() / (mainFrames - 1).coerceAtLeast(1)
-                        drawZoomedCover(canvas, background, width, height, 1f + 0.10f * progress)
+                        // Smoothstep removes abrupt visual stepping at the beginning and end.
+                        val smoothProgress = progress * progress * (3f - 2f * progress)
+                        // Stronger but still natural Ken Burns movement: 1.00x -> 1.18x.
+                        drawZoomedCover(canvas, background, width, height, 1f + 0.18f * smoothProgress)
                         canvas.drawBitmap(textOverlay, 0f, 0f, null)
                     } else {
                         ReelLayout.drawCover(canvas, ctaBitmap, width, height)
@@ -172,28 +173,23 @@ class ReelEncoder(private val context: Context) {
     ) {
         if (bitmap.width <= 0 || bitmap.height <= 0) return
 
-        val targetRatio = width.toFloat() / height.toFloat()
-        val sourceRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
-        var cropWidth: Float
-        var cropHeight: Float
+        // Draw into a fractional destination rectangle instead of rounding a source crop
+        // to integers every frame. This keeps the zoom visually smooth.
+        val baseScale = maxOf(
+            width.toFloat() / bitmap.width.toFloat(),
+            height.toFloat() / bitmap.height.toFloat()
+        )
+        val scale = baseScale * zoom
+        val drawWidth = bitmap.width * scale
+        val drawHeight = bitmap.height * scale
+        val left = (width - drawWidth) / 2f
+        val top = (height - drawHeight) / 2f
 
-        if (sourceRatio > targetRatio) {
-            cropHeight = bitmap.height.toFloat()
-            cropWidth = cropHeight * targetRatio
-        } else {
-            cropWidth = bitmap.width.toFloat()
-            cropHeight = cropWidth / targetRatio
-        }
-
-        cropWidth /= zoom
-        cropHeight /= zoom
-
-        // Keep the crop centered so the movement stays subtle and professional.
-        val left = ((bitmap.width - cropWidth) / 2f).toInt().coerceAtLeast(0)
-        val top = ((bitmap.height - cropHeight) / 2f).toInt().coerceAtLeast(0)
-        val right = (left + cropWidth.toInt()).coerceAtMost(bitmap.width)
-        val bottom = (top + cropHeight.toInt()).coerceAtMost(bitmap.height)
-
-        canvas.drawBitmap(bitmap, Rect(left, top, right, bottom), Rect(0, 0, width, height), null)
+        canvas.drawBitmap(
+            bitmap,
+            null,
+            RectF(left, top, left + drawWidth, top + drawHeight),
+            null
+        )
     }
 }
