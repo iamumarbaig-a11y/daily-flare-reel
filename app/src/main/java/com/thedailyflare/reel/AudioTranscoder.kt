@@ -102,21 +102,27 @@ class AudioTranscoder(private val context: Context) {
      * Mixes the generated TTS voice with the selected background music.
      * Music stays at 20%; voice is kept at full level and starts at 0 seconds.
      */
-    fun transcodeMixed(musicUri: Uri, voiceFile: File, output: File): Boolean {
+    fun transcodeMixed(musicUri: Uri, voiceFile: File, output: File, ctaVoiceFile: File? = null): Boolean {
         return try {
             val music = decodeToPcm { extractor -> extractor.setDataSource(context, musicUri, null) } ?: return false
             val voice = decodeToPcm { extractor -> extractor.setDataSource(voiceFile.absolutePath) } ?: return false
+            val ctaVoice = ctaVoiceFile?.takeIf { it.exists() && it.length() > 0L }?.let { decodeToPcm { extractor -> extractor.setDataSource(it.absolutePath) } }
             val targetRate = music.sampleRate
             val targetChannels = music.channels
             val musicSamples = toTarget(music, targetRate, targetChannels)
             val voiceSamples = toTarget(voice, targetRate, targetChannels)
-            // Match the full generated voice length. Loop music if it is shorter.
-            val totalSamples = voiceSamples.size
+            val ctaSamples = ctaVoice?.let { toTarget(it, targetRate, targetChannels) } ?: ShortArray(0)
+            // Main narration followed by CTA speech; silence naturally fills any remaining CTA time.
+            val totalSamples = voiceSamples.size + ctaSamples.size
             val mixed = ByteArray(totalSamples * 2)
             var i = 0
             while (i < totalSamples) {
                 val musicValue = if (musicSamples.isNotEmpty()) (musicSamples[i % musicSamples.size] * MUSIC_VOLUME).toInt() else 0
-                val voiceValue = if (i < voiceSamples.size) voiceSamples[i].toInt() else 0
+                val voiceValue = when {
+                    i < voiceSamples.size -> voiceSamples[i].toInt()
+                    i - voiceSamples.size < ctaSamples.size -> ctaSamples[i - voiceSamples.size].toInt()
+                    else -> 0
+                }
                 val value = (musicValue + voiceValue).coerceIn(-32768, 32767)
                 mixed[i * 2] = (value and 0xFF).toByte()
                 mixed[i * 2 + 1] = ((value shr 8) and 0xFF).toByte()
