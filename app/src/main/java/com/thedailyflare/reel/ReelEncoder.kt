@@ -12,7 +12,7 @@ import android.view.Surface
 import androidx.media3.common.util.UnstableApi
 import java.io.File
 
-/** Renders one continuous 18-second video: 15s news with smooth zoom, then 3s CTA image. */
+/** Renders one continuous 18-second video: 15s news with zoom and progressive text, then 3s CTA. */
 @UnstableApi
 class ReelEncoder(private val context: Context) {
     interface Drain { fun onFrame(frame: Int) {} }
@@ -33,21 +33,27 @@ class ReelEncoder(private val context: Context) {
         val ctaFrames = 3 * fps
         val totalFrames = mainFrames + ctaFrames
 
-        val textOverlay = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        try {
-            Canvas(textOverlay).apply {
-                ReelLayout.draw(this, title, headlines, width, height, null, false)
-            }
-            encodeFrames(background, ctaBitmap, textOverlay, mainFrames, totalFrames, fps, output, drain)
-        } finally {
-            textOverlay.recycle()
-        }
+        val bodyWordCount = ReelLayout.bodyWordCount(headlines)
+        encodeFrames(
+            background,
+            ctaBitmap,
+            title,
+            headlines,
+            bodyWordCount,
+            mainFrames,
+            totalFrames,
+            fps,
+            output,
+            drain
+        )
     }
 
     private fun encodeFrames(
         background: Bitmap,
         ctaBitmap: Bitmap,
-        textOverlay: Bitmap,
+        title: String,
+        headlines: List<String>,
+        bodyWordCount: Int,
         mainFrames: Int,
         totalFrames: Int,
         fps: Int,
@@ -56,6 +62,9 @@ class ReelEncoder(private val context: Context) {
     ) {
         val width = 1080
         val height = 1920
+        // The entire body becomes available within the first 3 seconds.
+        val revealFrames = minOf(mainFrames, 3 * fps)
+
         val format = MediaFormat.createVideoFormat("video/avc", width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, 6_000_000)
@@ -89,11 +98,29 @@ class ReelEncoder(private val context: Context) {
                 try {
                     if (frame < mainFrames) {
                         val progress = frame.toFloat() / (mainFrames - 1).coerceAtLeast(1)
-                        // Smoothstep removes abrupt visual stepping at the beginning and end.
                         val smoothProgress = progress * progress * (3f - 2f * progress)
-                        // Stronger but still natural Ken Burns movement: 1.00x -> 1.18x.
                         drawZoomedCover(canvas, background, width, height, 1f + 0.18f * smoothProgress)
-                        canvas.drawBitmap(textOverlay, 0f, 0f, null)
+
+                        // Title is immediate. Body words reveal progressively and all
+                        // become visible by three seconds regardless of article length.
+                        val visibleWords = if (bodyWordCount == 0) {
+                            0
+                        } else {
+                            val revealProgress =
+                                ((frame + 1).toFloat() / revealFrames.toFloat()).coerceIn(0f, 1f)
+                            kotlin.math.ceil(bodyWordCount * revealProgress).toInt()
+                        }
+
+                        ReelLayout.draw(
+                            canvas,
+                            title,
+                            headlines,
+                            width,
+                            height,
+                            null,
+                            false,
+                            visibleWords
+                        )
                     } else {
                         ReelLayout.drawCover(canvas, ctaBitmap, width, height)
                     }
@@ -173,8 +200,6 @@ class ReelEncoder(private val context: Context) {
     ) {
         if (bitmap.width <= 0 || bitmap.height <= 0) return
 
-        // Draw into a fractional destination rectangle instead of rounding a source crop
-        // to integers every frame. This keeps the zoom visually smooth.
         val baseScale = maxOf(
             width.toFloat() / bitmap.width.toFloat(),
             height.toFloat() / bitmap.height.toFloat()
