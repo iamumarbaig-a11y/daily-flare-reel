@@ -17,8 +17,8 @@ android {
         applicationId = "com.thedailyflare.reel"
         minSdk = 26
         targetSdk = 35
-        versionCode = 37
-        versionName = "37-kokoro-generation-lifecycle-fix"
+        versionCode = 38
+        versionName = "38-kokoro-folder-import"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
