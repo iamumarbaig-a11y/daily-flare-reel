@@ -6,11 +6,13 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.Settings
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
@@ -31,6 +33,8 @@ class MainActivity : Activity() {
     private lateinit var musicLabel: TextView
     private lateinit var voiceSpinner: Spinner
     private lateinit var voiceTts: VoiceTts
+    private lateinit var voiceStatus: TextView
+    private var voicePlayer: MediaPlayer? = null
     private var voiceOptions = emptyList<VoiceTts.VoiceOption>()
     private lateinit var titleInput: EditText
     private val headlineInputs = mutableListOf<EditText>()
@@ -64,6 +68,8 @@ class MainActivity : Activity() {
         root.addView(button("CHOOSE CTA IMAGE") { pickImage(101) }, lp())
         ctaImageLabel = label("No CTA image selected"); root.addView(ctaImageLabel, lp())
         section(root, "3. TEST ANDROID TTS VOICE")
+        voiceStatus = label("Loading voices...")
+        root.addView(voiceStatus, lp())
         voiceSpinner = Spinner(this)
         root.addView(voiceSpinner, lp())
         voiceTts = VoiceTts(this)
@@ -71,12 +77,14 @@ class MainActivity : Activity() {
             runOnUiThread {
                 voiceOptions = options
                 voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options.map { it.label })
+                voiceStatus.text = if (options.isEmpty()) "No English voices available in the active Android TTS engine" else options.size.toString() + " English voice(s) available"
                 if (options.isEmpty()) toast("No English Android TTS voices found")
             }
-        }, { error -> runOnUiThread { toast(error) } })
+        }, { error -> runOnUiThread { voiceStatus.text = error; toast(error) } })
         root.addView(button("TEST SELECTED VOICE") { testVoice() }, lp())
+        root.addView(button("OPEN ANDROID VOICE SETTINGS") { openVoiceSettings() }, lp())
         root.addView(TextView(this).apply {
-            text = "This only tests the selected phone voice. Your current reel export is unchanged."
+            text = "Test Selected Voice now plays the generated speech aloud. If only one voice appears, use Android Voice Settings to download or enable more voices."
             textSize = 14f
             setPadding(0, 4, 0, 12)
         }, lp())
@@ -149,13 +157,39 @@ class MainActivity : Activity() {
         headlineInputs.map { it.text.toString().trim() }.filter { it.isNotBlank() }.forEach { parts.add(it) }
         val speechText = parts.joinToString(". ")
         if (speechText.isBlank()) return toast("Enter a heading or subheading first")
-        toast("Generating voice...")
+        toast("Generating and playing voice...")
         val output = File(cacheDir, "daily_flare_voice.wav")
         voiceTts.speakToFile(speechText, selected, output) { ok, duration ->
             runOnUiThread {
-                if (ok) toast("Voice generated successfully: " + duration + " ms")
-                else toast("Voice generation failed")
+                if (!ok) {
+                    toast("Voice generation failed")
+                } else {
+                    playVoiceFile(output)
+                    toast("Playing selected voice: " + duration + " ms")
+                }
             }
+        }
+    }
+
+    private fun playVoiceFile(file: File) {
+        try {
+            voicePlayer?.release()
+            voicePlayer = MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                setOnCompletionListener { it.release(); voicePlayer = null }
+                prepare()
+                start()
+            }
+        } catch (_: Exception) {
+            toast("Voice was generated but could not be played")
+        }
+    }
+
+    private fun openVoiceSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_TTS_SETTINGS))
+        } catch (_: Exception) {
+            toast("Android TTS settings are unavailable on this phone")
         }
     }
 
@@ -206,6 +240,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        voicePlayer?.release()
+        voicePlayer = null
         if (::voiceTts.isInitialized) voiceTts.shutdown()
         super.onDestroy()
     }
