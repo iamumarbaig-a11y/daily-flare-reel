@@ -27,6 +27,9 @@ class MainActivity : Activity() {
     private lateinit var mainImageLabel: TextView
     private lateinit var ctaImageLabel: TextView
     private lateinit var musicLabel: TextView
+    private lateinit var voiceSpinner: Spinner
+    private lateinit var voiceTts: VoiceTts
+    private var voiceOptions = emptyList<VoiceTts.VoiceOption>()
     private lateinit var titleInput: EditText
     private val headlineInputs = mutableListOf<EditText>()
     private var mainBitmap: Bitmap? = null
@@ -58,7 +61,25 @@ class MainActivity : Activity() {
         section(root, "2. 3-SECOND CTA IMAGE")
         root.addView(button("CHOOSE CTA IMAGE") { pickImage(101) }, lp())
         ctaImageLabel = label("No CTA image selected"); root.addView(ctaImageLabel, lp())
-        section(root, "3. MUSIC — ALL 18 SECONDS")
+        section(root, "3. TEST ANDROID TTS VOICE")
+        voiceSpinner = Spinner(this)
+        root.addView(voiceSpinner, lp())
+        voiceTts = VoiceTts(this)
+        voiceTts.initialize({ options ->
+            runOnUiThread {
+                voiceOptions = options
+                voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options.map { it.label })
+                if (options.isEmpty()) toast("No English Android TTS voices found")
+            }
+        }, { error -> runOnUiThread { toast(error) } })
+        root.addView(button("TEST SELECTED VOICE") { testVoice() }, lp())
+        root.addView(TextView(this).apply {
+            text = "This only tests the selected phone voice. Your current reel export is unchanged."
+            textSize = 14f
+            setPadding(0, 4, 0, 12)
+        }, lp())
+
+        section(root, "4. MUSIC — ALL 18 SECONDS")
         root.addView(button("CHOOSE MUSIC") { pickAudio() }, lp())
         musicLabel = label("No music selected"); root.addView(musicLabel, lp())
         root.addView(TextView(this).apply { text = "The export is exactly 18 seconds: 15 seconds of the main image with the heading and 7 subheadings, followed by 3 seconds of the CTA image. The finished video is saved to Movies/Daily Flare Reel."; textSize = 14f; setPadding(0, 12, 0, 12) }, lp())
@@ -117,6 +138,25 @@ class MainActivity : Activity() {
 
     private fun refreshPreview() { preview.title = titleInput.text.toString(); preview.headlines = headlineInputs.map { it.text.toString() }; preview.invalidate() }
 
+    private fun testVoice() {
+        if (!::voiceTts.isInitialized) return toast("Voice service is still loading")
+        val selected = voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?.name
+        val parts = mutableListOf<String>()
+        val heading = titleInput.text.toString().trim()
+        if (heading.isNotBlank()) parts.add(heading)
+        headlineInputs.map { it.text.toString().trim() }.filter { it.isNotBlank() }.forEach { parts.add(it) }
+        val speechText = parts.joinToString(". ")
+        if (speechText.isBlank()) return toast("Enter a heading or subheading first")
+        toast("Generating voice...")
+        val output = File(cacheDir, "daily_flare_voice.wav")
+        voiceTts.speakToFile(speechText, selected, output) { ok, duration ->
+            runOnUiThread {
+                if (ok) toast("Voice generated successfully: " + duration + " ms")
+                else toast("Voice generation failed")
+            }
+        }
+    }
+
     private fun exportReel() {
         val bg = mainBitmap ?: return toast("Choose the main 15-second image")
         val cta = ctaBitmap ?: return toast("Choose the 3-second CTA image")
@@ -161,6 +201,11 @@ class MainActivity : Activity() {
                 sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(destination))); destination.exists() && destination.length() > 0L
             }
         } catch (_: Exception) { false }
+    }
+
+    override fun onDestroy() {
+        if (::voiceTts.isInitialized) voiceTts.shutdown()
+        super.onDestroy()
     }
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
