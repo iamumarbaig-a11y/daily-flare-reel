@@ -268,7 +268,7 @@ class AudioTranscoder(private val context: Context) {
                         input.clear()
                         val remaining = pcm.size - inputOffset
                         if (remaining <= 0) {
-                            encoder.queueInputBuffer(index, 0, 0, MAX_US, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            encoder.queueInputBuffer(index, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                             inputEos = true
                         } else {
                             val count = minOf(remaining, input.capacity())
