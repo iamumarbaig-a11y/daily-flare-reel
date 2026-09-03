@@ -3,15 +3,20 @@ package com.thedailyflare.reel
 import android.app.Activity
 import android.content.Intent
 import android.media.MediaPlayer
+import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.*
-import androidx.documentfile.provider.DocumentFile
 import com.k2fsa.sherpa.onnx.*
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import java.io.File
 import java.io.FileOutputStream
 
 class KokoroExperimentActivity : Activity() {
+    companion object { private const val REQUEST_PACKAGE = 100 }
+
     private lateinit var status: TextView
     private lateinit var textInput: EditText
     private var tts: OfflineTts? = null
@@ -30,9 +35,9 @@ class KokoroExperimentActivity : Activity() {
             text = "Kokoro AI Voice — Experimental"
             textSize = 26f
         }, lp())
-        root.addView(button("CHOOSE KOKORO MODEL PACKAGE") { chooseFolder() }, lp())
+        root.addView(button("CHOOSE KOKORO MODEL PACKAGE") { choosePackage() }, lp())
         status = TextView(this).apply {
-            text = "Choose a complete Sherpa-Kokoro package containing model.onnx, voices.bin, tokens.txt and espeak-ng-data."
+            text = "Choose the complete Kokoro package (.tar.bz2). The app will extract and import it locally."
             setPadding(0, 12, 0, 12)
         }
         root.addView(status, lp())
@@ -49,44 +54,42 @@ class KokoroExperimentActivity : Activity() {
         setContentView(scroll)
     }
 
-    private fun chooseFolder() {
-        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+    private fun choosePackage() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-        }, 100)
+        }
+        startActivityForResult(intent, REQUEST_PACKAGE)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != 100 || resultCode != RESULT_OK || data?.data == null) return
+        if (requestCode != REQUEST_PACKAGE || resultCode != RESULT_OK || data?.data == null) return
 
         val uri = data.data!!
         status.text = "Importing Kokoro package..."
+
         Thread {
             try {
                 val flags = data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION
-                contentResolver.takePersistableUriPermission(uri, flags)
-                val source = DocumentFile.fromTreeUri(this, uri)
-                    ?: throw IllegalStateException("Unable to read selected folder")
+                if (flags != 0) {
+                    try { contentResolver.takePersistableUriPermission(uri, flags) }
+                    catch (_: SecurityException) { }
+                }
 
                 val destination = File(filesDir, "kokoro")
                 destination.deleteRecursively()
-                destination.mkdirs()
-                copyTree(source, destination)
+                if (!destination.mkdirs() && !destination.isDirectory) {
+                    throw IllegalStateException("Cannot create local Kokoro storage")
+                }
+
+                importPackage(uri, destination)
 
                 val packageRoot = findPackageRoot(destination)
-                if (packageRoot == null) {
-                    val hasModel = findFile(destination, "model.onnx") != null
-                    val hasIndividualVoices = destination.walkTopDown().any {
-                        it.isFile && it.name.matches(Regex("^[ab][fm]_.+\\.bin$"))
-                    }
-                    val message = if (hasModel && hasIndividualVoices) {
-                        "This is the ONNX Community package with separate voice files. Sherpa-Kokoro requires voices.bin plus tokens.txt and espeak-ng-data, so it cannot run this download directly."
-                    } else {
-                        "Package imported, but required files were not found: model.onnx, voices.bin, tokens.txt and espeak-ng-data."
-                    }
-                    runOnUiThread { status.text = message }
-                    return@Thread
-                }
+                    ?: throw IllegalStateException(
+                        "Import completed, but model.onnx, voices.bin, tokens.txt and espeak-ng-data were not found."
+                    )
 
                 val config = OfflineTtsConfig(
                     model = OfflineTtsModelConfig(
@@ -109,25 +112,70 @@ class KokoroExperimentActivity : Activity() {
                     status.text = "Kokoro is ready locally. Choose Bella or Adam to generate and play audio."
                 }
             } catch (e: Exception) {
+                File(filesDir, "kokoro").deleteRecursively()
                 runOnUiThread {
-                    status.text = "Import error: " + (e.message ?: "unknown error")
+                    status.text = "Import error: " + (e.message ?: e.javaClass.simpleName)
                 }
             }
         }.start()
     }
 
-    private fun copyTree(source: DocumentFile, destination: File) {
-        source.listFiles().forEach { child ->
-            val target = File(destination, child.name ?: "unnamed")
-            if (child.isDirectory) {
-                target.mkdirs()
-                copyTree(child, target)
-            } else if (child.isFile) {
-                contentResolver.openInputStream(child.uri)?.use { input ->
-                    FileOutputStream(target).use { output -> input.copyTo(output) }
-                } ?: throw IllegalStateException("Cannot read ${child.name}")
+    private fun importPackage(uri: Uri, destination: File) {
+        val name = queryDisplayName(uri)?.lowercase().orEmpty()
+        if (name.endsWith(".tar.bz2") || name.endsWith(".tbz2") || name.endsWith(".tbz")) {
+            extractTarBz2(uri, destination)
+        } else {
+            throw IllegalArgumentException(
+                "Please select the downloaded Kokoro .tar.bz2 package, not a folder or individual model file."
+            )
+        }
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                return cursor.getString(cursor.getColumnIndexOrThrow(android.provider.OpenableColumns.DISPLAY_NAME))
             }
         }
+        return null
+    }
+
+    private fun extractTarBz2(uri: Uri, destination: File) {
+        contentResolver.openInputStream(uri)?.use { raw ->
+            BZip2CompressorInputStream(raw).use { bz2 ->
+                TarArchiveInputStream(bz2).use { tar ->
+                    while (true) {
+                        val current = tar.nextEntry as? TarArchiveEntry ?: break
+                        val target = safeTarget(destination, current.name)
+                        when {
+                            current.isDirectory -> {
+                                if (!target.exists() && !target.mkdirs()) {
+                                    throw IllegalStateException("Cannot create ${current.name}")
+                                }
+                            }
+                            current.isFile -> {
+                                target.parentFile?.let {
+                                    if (!it.exists() && !it.mkdirs()) {
+                                        throw IllegalStateException("Cannot create folder for ${current.name}")
+                                    }
+                                }
+                                FileOutputStream(target).use { output -> tar.copyTo(output) }
+                            }
+                        }
+                    }
+                }
+            }
+        } ?: throw IllegalStateException("Cannot read selected package")
+    }
+
+    private fun safeTarget(destination: File, entryName: String): File {
+        val target = File(destination, entryName)
+        val rootPath = destination.canonicalFile
+        val targetPath = target.canonicalFile
+        if (targetPath != rootPath && !targetPath.path.startsWith(rootPath.path + File.separator)) {
+            throw SecurityException("Unsafe archive entry: $entryName")
+        }
+        return targetPath
     }
 
     private fun findPackageRoot(root: File): File? {
@@ -135,15 +183,11 @@ class KokoroExperimentActivity : Activity() {
         return root.walkTopDown().firstOrNull { it.isDirectory && isCompatiblePackage(it) }
     }
 
-    private fun isCompatiblePackage(dir: File): Boolean {
-        return File(dir, "model.onnx").isFile &&
-                File(dir, "voices.bin").isFile &&
-                File(dir, "tokens.txt").isFile &&
-                File(dir, "espeak-ng-data").isDirectory
-    }
-
-    private fun findFile(root: File, name: String): File? =
-        root.walkTopDown().firstOrNull { it.isFile && it.name == name }
+    private fun isCompatiblePackage(dir: File): Boolean =
+        File(dir, "model.onnx").isFile &&
+        File(dir, "voices.bin").isFile &&
+        File(dir, "tokens.txt").isFile &&
+        File(dir, "espeak-ng-data").isDirectory
 
     private fun generate(sid: Int) {
         val engine = tts
@@ -160,15 +204,9 @@ class KokoroExperimentActivity : Activity() {
         status.text = "Generating voice locally..."
         Thread {
             try {
-                val config = GenerationConfig(
-                    sid = sid,
-                    speed = 1.0f,
-                    silenceScale = 0.2f
-                )
+                val config = GenerationConfig(sid = sid, speed = 1.0f, silenceScale = 0.2f)
                 val audio = engine.generateWithConfigAndCallback(
-                    text = text,
-                    config = config,
-                    callback = { 1 }
+                    text = text, config = config, callback = { 1 }
                 )
                 val output = File(cacheDir, "kokoro_${sid}.wav")
                 output.delete()
@@ -185,7 +223,7 @@ class KokoroExperimentActivity : Activity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    status.text = "Generation error: " + (e.message ?: "unknown error")
+                    status.text = "Generation error: " + (e.message ?: e.javaClass.simpleName)
                 }
             }
         }.start()
@@ -203,6 +241,5 @@ class KokoroExperimentActivity : Activity() {
         Button(this).apply { this.text = text; setOnClickListener { action() } }
 
     private fun lp() = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
-
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
 }
