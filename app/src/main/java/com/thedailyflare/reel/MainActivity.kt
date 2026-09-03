@@ -284,13 +284,14 @@ class MainActivity : Activity() {
                 val speechText = speechParts.joinToString(". ")
                 if (speechText.isBlank()) throw IllegalStateException("Enter a heading or subheading for the voice")
 
-                val selectedVoice = selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)
+                val selectedVoiceOption = this@MainActivity.selectedVoice
+                    ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)
                     ?: throw IllegalStateException("Select a Kokoro voice first")
                 val voiceLatch = CountDownLatch(1)
                 var voiceOk = false
                 if (!::voiceTts.isInitialized) throw IllegalStateException("Kokoro voice service is not ready")
                 val selectedSpeed = voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition) { 1.0f }
-                voiceTts.speakToFile(speechText, selectedVoice, voice, selectedSpeed) { ok, _ ->
+                voiceTts.speakToFile(speechText, selectedVoiceOption, voice, selectedSpeed) { ok, _ ->
                     voiceOk = ok
                     voiceLatch.countDown()
                 }
@@ -320,7 +321,7 @@ class MainActivity : Activity() {
                 runOnUiThread { exportProgress.progress = 82; exportStatus.text = "Generating CTA voice..." }
                 val ctaLatch = CountDownLatch(1)
                 var ctaOk = false
-                voiceTts.speakToFile("FOLLOW THE DAILY FLARE ON SOCIAL MEDIA.", selectedVoice, ctaVoice, selectedSpeed) { ok, _ -> ctaOk = ok; ctaLatch.countDown() }
+                voiceTts.speakToFile("FOLLOW THE DAILY FLARE ON SOCIAL MEDIA.", selectedVoiceOption, ctaVoice, selectedSpeed) { ok, _ -> ctaOk = ok; ctaLatch.countDown() }
                 if (!ctaLatch.await(30, TimeUnit.SECONDS) || !ctaOk || !ctaVoice.exists() || ctaVoice.length() == 0L) throw IllegalStateException("CTA voice generation failed")
                 runOnUiThread { exportProgress.progress = 88; exportStatus.text = "Mixing voice and music..." }
                 if (!AudioTranscoder(this).transcodeMixed(music, voice, audio, ctaVoice) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Voice and music could not be mixed")
