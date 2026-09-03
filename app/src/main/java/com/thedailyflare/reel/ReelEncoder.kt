@@ -15,7 +15,7 @@ import java.io.File
 /** Renders a narration-length news reel followed by a 3-second CTA. */
 @UnstableApi
 class ReelEncoder(private val context: Context) {
-    interface Drain { fun onFrame(frame: Int) {} }
+    interface Drain { fun onFrame(frame: Int, total: Int) {} }
 
     fun encode(
         background: Bitmap,
@@ -33,7 +33,7 @@ class ReelEncoder(private val context: Context) {
         val fps = 60
         // Narration controls the reel length. Never force variable text into 15 seconds.
         val mainFrames = (((voiceDurationMs.coerceAtLeast(1L) + 999L) / 1000L) * fps).toInt().coerceAtLeast(fps)
-        val ctaFrames = 3 * fps
+        val ctaFrames = 3 * fps // CTA remains a clean 3-second visual ending
         val totalFrames = mainFrames + ctaFrames
 
         val bodyWordCount = ReelLayout.bodyWordCount(headlines)
@@ -165,7 +165,7 @@ class ReelEncoder(private val context: Context) {
                         }
                     }
                 }
-                drain?.onFrame(frame + 1)
+                drain?.onFrame(frame + 1, totalFrames)
             }
 
             codec.signalEndOfInputStream()
