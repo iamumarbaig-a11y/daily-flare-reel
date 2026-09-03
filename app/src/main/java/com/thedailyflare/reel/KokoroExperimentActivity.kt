@@ -2,11 +2,9 @@ package com.thedailyflare.reel
 
 import android.app.Activity
 import android.content.Intent
-import android.database.Cursor
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
-import android.provider.OpenableColumns
 import android.view.ViewGroup
 import android.widget.*
 import com.k2fsa.sherpa.onnx.*
@@ -22,12 +20,12 @@ class KokoroExperimentActivity : Activity() {
 
     private lateinit var status: TextView
     private lateinit var textInput: EditText
-    private var tts: OfflineTts? = null
     private var modelDir: File? = null
     private var player: MediaPlayer? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         val scroll = ScrollView(this)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -43,7 +41,7 @@ class KokoroExperimentActivity : Activity() {
         root.addView(button("CHOOSE KOKORO MODEL PACKAGE") { choosePackage() }, lp())
 
         status = TextView(this).apply {
-            text = "Select the complete kokoro-en-v0_19.tar.bz2 file. Do not select a folder or extract it first."
+            text = "Select the complete kokoro-en-v0_19.tar.bz2 file."
             setPadding(0, 12, 0, 12)
         }
         root.addView(status, lp())
@@ -59,6 +57,16 @@ class KokoroExperimentActivity : Activity() {
             text = "Experimental only. Your existing Android TTS and reel export are untouched."
         }, lp())
         setContentView(scroll)
+
+        restoreImportedPackage()
+    }
+
+    private fun restoreImportedPackage() {
+        val existing = findPackageRoot(File(filesDir, "kokoro"))
+        if (existing != null) {
+            modelDir = existing
+            status.text = "Kokoro package is ready locally. Bella and Adam are available."
+        }
     }
 
     private fun choosePackage() {
@@ -100,30 +108,18 @@ class KokoroExperimentActivity : Activity() {
 
                 val importedEntries = extractTarBz2(uri, destination)
                 if (importedEntries == 0) {
-                    throw IllegalStateException("The selected file contained no readable TAR entries. Please select the original kokoro-en-v0_19.tar.bz2 file.")
+                    throw IllegalStateException("The selected file contained no readable TAR entries.")
                 }
 
                 val packageRoot = findPackageRoot(destination)
                     ?: throw IllegalStateException(
-                        "Extraction finished, but the Kokoro package layout was not found. Extracted $importedEntries entries. Please use the original official kokoro-en-v0_19.tar.bz2 download."
+                        "Extraction finished, but the required Kokoro files were not found."
                     )
 
-                val config = OfflineTtsConfig(
-                    model = OfflineTtsModelConfig(
-                        kokoro = OfflineTtsKokoroModelConfig(
-                            model = File(packageRoot, "model.onnx").absolutePath,
-                            voices = File(packageRoot, "voices.bin").absolutePath,
-                            tokens = File(packageRoot, "tokens.txt").absolutePath,
-                            dataDir = File(packageRoot, "espeak-ng-data").absolutePath
-                        ),
-                        numThreads = 2,
-                        debug = false,
-                        provider = "cpu"
-                    )
-                )
-
-                tts?.release()
-                tts = OfflineTts(config = config)
+                // Do not create the native OfflineTts object here. The previous build
+                // created it on the import thread and used it later on another thread.
+                // Each generation now creates and uses the native engine on the same
+                // worker thread, avoiding cross-thread native runtime state.
                 modelDir = packageRoot
 
                 runOnUiThread {
@@ -138,10 +134,28 @@ class KokoroExperimentActivity : Activity() {
         }.start()
     }
 
+    private fun createEngine(packageRoot: File): OfflineTts {
+        val config = OfflineTtsConfig(
+            model = OfflineTtsModelConfig(
+                kokoro = OfflineTtsKokoroModelConfig(
+                    model = File(packageRoot, "model.onnx").absolutePath,
+                    voices = File(packageRoot, "voices.bin").absolutePath,
+                    tokens = File(packageRoot, "tokens.txt").absolutePath,
+                    dataDir = File(packageRoot, "espeak-ng-data").absolutePath
+                ),
+                // Match the official Android/Kotlin Kokoro examples and keep
+                // memory pressure lower on the phone.
+                numThreads = 1,
+                debug = true,
+                provider = "cpu"
+            )
+        )
+        return OfflineTts(config = config)
+    }
+
     private fun extractTarBz2(uri: Uri, destination: File): Int {
         contentResolver.openInputStream(uri)?.use { raw ->
             BufferedInputStream(raw).use { buffered ->
-                // Verify bzip2 by its file signature instead of trusting the picker filename.
                 buffered.mark(4)
                 val b0 = buffered.read()
                 val b1 = buffered.read()
@@ -149,7 +163,7 @@ class KokoroExperimentActivity : Activity() {
                 buffered.reset()
                 if (b0 != 'B'.code || b1 != 'Z'.code || b2 != 'h'.code) {
                     throw IllegalArgumentException(
-                        "This is not a .tar.bz2 Kokoro archive. Select kokoro-en-v0_19.tar.bz2 itself, not a folder."
+                        "This is not a .tar.bz2 Kokoro archive."
                     )
                 }
 
@@ -202,6 +216,7 @@ class KokoroExperimentActivity : Activity() {
     }
 
     private fun findPackageRoot(root: File): File? {
+        if (!root.exists()) return null
         if (isCompatiblePackage(root)) return root
 
         return root.walkTopDown()
@@ -216,8 +231,8 @@ class KokoroExperimentActivity : Activity() {
         File(dir, "espeak-ng-data").isDirectory
 
     private fun generate(sid: Int) {
-        val engine = tts
-        if (engine == null || modelDir == null) {
+        val packageRoot = modelDir ?: findPackageRoot(File(filesDir, "kokoro"))
+        if (packageRoot == null) {
             toast("Import a compatible Kokoro package first")
             return
         }
@@ -230,16 +245,28 @@ class KokoroExperimentActivity : Activity() {
 
         status.text = "Generating voice locally..."
         Thread {
+            var engine: OfflineTts? = null
             try {
-                val config = GenerationConfig(sid = sid, speed = 1.0f, silenceScale = 0.2f)
+                // Create, generate and release on this same thread.
+                engine = createEngine(packageRoot)
+
+                val config = GenerationConfig(
+                    sid = sid,
+                    speed = 1.0f,
+                    silenceScale = 0.2f
+                )
                 val audio = engine.generateWithConfigAndCallback(
                     text = text,
                     config = config,
-                    callback = { 1 }
+                    callback = { _: FloatArray -> 1 }
                 )
+
                 val output = File(cacheDir, "kokoro_$sid.wav")
                 output.delete()
-                audio.save(filename = output.absolutePath)
+                val saved = audio.save(filename = output.absolutePath)
+                if (!saved || !output.isFile || output.length() == 0L) {
+                    throw IllegalStateException("Kokoro generated no playable audio")
+                }
 
                 runOnUiThread {
                     player?.release()
@@ -254,6 +281,11 @@ class KokoroExperimentActivity : Activity() {
                 runOnUiThread {
                     status.text = "Generation error: " + (e.message ?: e.javaClass.simpleName)
                 }
+            } finally {
+                try {
+                    engine?.release()
+                } catch (_: Exception) {
+                }
             }
         }.start()
     }
@@ -261,8 +293,6 @@ class KokoroExperimentActivity : Activity() {
     override fun onDestroy() {
         player?.release()
         player = null
-        tts?.release()
-        tts = null
         super.onDestroy()
     }
 
