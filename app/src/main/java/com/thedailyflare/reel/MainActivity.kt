@@ -21,6 +21,7 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.ArrayAdapter
 import android.widget.TextView
+import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
@@ -36,6 +37,8 @@ class MainActivity : Activity() {
     private lateinit var voiceSpinner: Spinner
     private lateinit var voiceTts: VoiceTts
     private lateinit var voiceStatus: TextView
+    private lateinit var exportStatus: TextView
+    private lateinit var exportProgress: ProgressBar
     private var voicePlayer: MediaPlayer? = null
     private var voiceOptions = emptyList<VoiceTts.VoiceOption>()
     private lateinit var titleInput: EditText
@@ -95,7 +98,11 @@ class MainActivity : Activity() {
         root.addView(button("CHOOSE MUSIC") { pickAudio() }, lp())
         musicLabel = label("No music selected"); root.addView(musicLabel, lp())
         root.addView(TextView(this).apply { text = "The export is exactly 18 seconds: 15 seconds of the main image with the heading and 7 subheadings, followed by 3 seconds of the CTA image. The finished video is saved to Movies/Daily Flare Reel."; textSize = 14f; setPadding(0, 12, 0, 12) }, lp())
-        root.addView(button("EXPORT 18-SECOND REEL") { exportReel() }, lp())
+        exportStatus = label("Ready to export")
+        root.addView(exportStatus, lp())
+        exportProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0 }
+        root.addView(exportProgress, lp())
+        root.addView(button("EXPORT REEL") { exportReel() }, lp())
         setContentView(scroll)
     }
 
@@ -213,14 +220,15 @@ class MainActivity : Activity() {
         val music = musicUri ?: return toast("Choose music")
         val title = titleInput.text.toString().trim().ifBlank { "Main heading" }
         val headlines = headlineInputs.map { it.text.toString().trim() }
-        toast("Rendering 15s news + 3s CTA")
+        exportStatus.text = "Preparing export..."; exportProgress.progress = 0; toast("Starting export")
         thread(name = "daily-flare-export") {
             try {
                 val video = File(cacheDir, "daily_flare_video.mp4")
                 val voice = File(cacheDir, "daily_flare_export_voice.wav")
+                val ctaVoice = File(cacheDir, "daily_flare_cta_voice.wav")
                 val audio = File(cacheDir, "daily_flare_mixed_audio_aac.mp4")
                 val output = File(cacheDir, "daily_flare_reel_18s.mp4")
-                video.delete(); voice.delete(); audio.delete(); output.delete()
+                video.delete(); voice.delete(); ctaVoice.delete(); audio.delete(); output.delete()
 
                 val speechParts = mutableListOf<String>()
                 if (title.isNotBlank()) speechParts.add(title)
@@ -252,12 +260,24 @@ class MainActivity : Activity() {
                 // Start body text slightly early to remove the visible dead gap after
                 // the spoken headline while keeping the headline itself immediate.
                 val titleSpeechMs = (rawTitleSpeechMs - 250L).coerceAtLeast(0L)
-                ReelEncoder(this).encode(bg, cta, title, headlines, voiceDurationMs, titleSpeechMs, video)
+                ReelEncoder(this).encode(bg, cta, title, headlines, voiceDurationMs, titleSpeechMs, video, object : ReelEncoder.Drain {
+                    override fun onFrame(frame: Int, total: Int) {
+                        val percent = ((frame * 80L) / total.coerceAtLeast(1)).toInt()
+                        runOnUiThread { exportProgress.progress = percent; exportStatus.text = "Rendering video... $percent%" }
+                    }
+                })
                 if (!video.exists() || video.length() == 0L) throw IllegalStateException("Video rendering produced no output")
-                if (!AudioTranscoder(this).transcodeMixed(music, voice, audio) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Voice and music could not be mixed")
+                runOnUiThread { exportProgress.progress = 82; exportStatus.text = "Generating CTA voice..." }
+                val ctaLatch = CountDownLatch(1)
+                var ctaOk = false
+                voiceTts.speakToFile("FOLLOW US ON SOCIAL MEDIA", selectedVoice, ctaVoice) { ok, _ -> ctaOk = ok; ctaLatch.countDown() }
+                if (!ctaLatch.await(30, TimeUnit.SECONDS) || !ctaOk || !ctaVoice.exists() || ctaVoice.length() == 0L) throw IllegalStateException("CTA voice generation failed")
+                runOnUiThread { exportProgress.progress = 88; exportStatus.text = "Mixing voice and music..." }
+                if (!AudioTranscoder(this).transcodeMixed(music, voice, audio, ctaVoice) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Voice and music could not be mixed")
+                runOnUiThread { exportProgress.progress = 95; exportStatus.text = "Finalizing video..." }
                 if (!AudioMuxer().mux(video, audio, output) || !output.exists() || output.length() == 0L) throw IllegalStateException("Audio/video muxing failed")
                 val saved = saveToGallery(output)
-                runOnUiThread { toast(if (saved) "Export complete: saved to Movies/Daily Flare Reel" else "Export completed but could not save to gallery") }
+                runOnUiThread { exportProgress.progress = 100; exportStatus.text = if (saved) "Export complete ✓" else "Export completed but could not save to gallery"; toast(if (saved) "Export complete: saved to Movies/Daily Flare Reel" else "Export completed but could not save to gallery") }
             } catch (e: Exception) { runOnUiThread { toast("Export failed: ${e.message ?: "unknown error"}") } }
         }
     }
