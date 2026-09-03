@@ -241,9 +241,17 @@ class MainActivity : Activity() {
                 }
 
                 val voiceDurationMs = getAudioDurationMs(voice)
-                val spokenWords = speechText.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
-                val titleWords = title.trim().split(Regex("\\s+")).count { it.isNotBlank() }
-                val titleSpeechMs = if (spokenWords.isNotEmpty()) voiceDurationMs * titleWords / spokenWords.size else 0L
+                // Estimate the spoken headline from character weight rather than raw
+                // word count. Word-count ratios were consistently overestimating the
+                // headline and leaving an empty pause before body words appeared.
+                val spokenCharacters = speechText.count { !it.isWhitespace() && it != '.' && it != ',' }
+                val titleCharacters = title.count { !it.isWhitespace() && it != '.' && it != ',' }
+                val rawTitleSpeechMs = if (spokenCharacters > 0) {
+                    voiceDurationMs * titleCharacters / spokenCharacters
+                } else 0L
+                // Start body text slightly early to remove the visible dead gap after
+                // the spoken headline while keeping the headline itself immediate.
+                val titleSpeechMs = (rawTitleSpeechMs - 250L).coerceAtLeast(0L)
                 ReelEncoder(this).encode(bg, cta, title, headlines, voiceDurationMs, titleSpeechMs, video)
                 if (!video.exists() || video.length() == 0L) throw IllegalStateException("Video rendering produced no output")
                 if (!AudioTranscoder(this).transcodeMixed(music, voice, audio) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Voice and music could not be mixed")
