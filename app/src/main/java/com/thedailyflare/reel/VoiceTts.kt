@@ -33,15 +33,30 @@ class VoiceTts(context: Context) {
         } else onReady(voices)
     }
 
+    /**
+     * Kokoro should narrate words, not the meanings of emoji (for example
+     * 🇺🇦 -> "Ukraine" or 🔥 -> "fire").  Keep the original text untouched
+     * for the UI/video and clean only the speech copy.
+     *
+     * Newlines are deliberately preserved here; they are not converted into
+     * pauses or otherwise reformatted.
+     */
+    private fun cleanSpeechTextForKokoro(text: String): String {
+        return text
+            .replace(Regex("[\\p{So}\\p{Cn}]"), "")
+            .replace(Regex("\\uFE0F|\\u200D"), "")
+    }
+
     fun speakToFile(text: String, voice: VoiceOption?, output: File, speed: Float = 1.0f, onDone: (Boolean, Long) -> Unit) {
         val packageRoot = findPackageRoot(File(appContext.filesDir, "kokoro"))
         if (packageRoot == null || voice == null) { onDone(false, 0L); return }
+        val speechText = cleanSpeechTextForKokoro(text)
         thread(name = "kokoro-voice-generation") {
             var engine: OfflineTts? = null
             try {
                 output.parentFile?.mkdirs(); output.delete()
                 engine = createEngine(packageRoot)
-                val audio = engine.generate(text = text, sid = voice.sid, speed = speed)
+                val audio = engine.generate(text = speechText, sid = voice.sid, speed = speed)
                 if (audio.samples.isEmpty()) throw IllegalStateException("Kokoro returned empty audio")
                 audio.save(filename = output.absolutePath)
                 if (!output.isFile || output.length() < 128L) throw IllegalStateException("Generated audio is empty")
