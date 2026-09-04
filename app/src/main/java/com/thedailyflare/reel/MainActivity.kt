@@ -17,6 +17,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ImageView
 import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.ArrayAdapter
@@ -61,18 +62,16 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 24, 32, 32) }
         scroll.addView(root)
-        root.addView(TextView(this).apply { text = "Daily Flare Reel"; textSize = 30f; setTextColor(0xFF172A3A.toInt()) }, lp())
-        root.addView(TextView(this).apply { text = "18 seconds • 9:16 • 1080×1920\n15s main image + text • 3s CTA image • music for all 18s"; textSize = 17f; setPadding(0, 4, 0, 18) }, lp())
+        root.addView(ImageView(this).apply { setImageResource(R.drawable.daily_flare_logo); adjustViewBounds = true; setPadding(0, 0, 0, 8) }, LinearLayout.LayoutParams(-1, 96))
+        root.addView(TextView(this).apply { text = "Daily Flare Reel"; textSize = 30f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 0, 0, 12) }, lp())
         preview = ReelPreviewView(this).apply { setBackgroundColor(0xFFEFEFEF.toInt()) }
         root.addView(preview, lp())
         section(root, "1. MAIN 15-SECOND IMAGE")
         root.addView(button("CHOOSE MAIN IMAGE") { pickImage(100) }, lp())
         mainImageLabel = label("No main image selected"); root.addView(mainImageLabel, lp())
-        section(root, "MAIN HEADING")
         titleInput = edit("Main heading", 2); root.addView(titleInput, lp())
         titleInput.setOnFocusChangeListener { _, _ -> refreshPreview() }
         for (i in 1..7) {
-            section(root, "SUBHEADING $i")
             val input = edit("Subheading $i", 2)
             headlineInputs.add(input); root.addView(input, lp())
             input.setOnFocusChangeListener { _, _ -> refreshPreview() }
@@ -103,16 +102,9 @@ class MainActivity : Activity() {
         refreshKokoroState()
         root.addView(button("TEST SELECTED KOKORO VOICE") { testVoice() }, lp())
         root.addView(button("OPEN KOKORO MODEL PACKAGE") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }, lp())
-        root.addView(TextView(this).apply {
-            text = "Kokoro now replaces Android TTS for voice testing and reel export. The previously imported model folder is reused and not reset."
-            textSize = 14f
-            setPadding(0, 4, 0, 12)
-        }, lp())
-
         section(root, "4. MUSIC — ALL 18 SECONDS")
         root.addView(button("CHOOSE MUSIC") { pickAudio() }, lp())
         musicLabel = label("No music selected"); root.addView(musicLabel, lp())
-        root.addView(TextView(this).apply { text = "The export is exactly 18 seconds: 15 seconds of the main image with the heading and 7 subheadings, followed by 3 seconds of the CTA image. Background music is mixed at 15% volume under the Kokoro narration. The finished video is saved to Movies/Daily Flare Reel."; textSize = 14f; setPadding(0, 12, 0, 12) }, lp())
         exportStatus = label("Ready to export")
         root.addView(exportStatus, lp())
         exportProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0 }
