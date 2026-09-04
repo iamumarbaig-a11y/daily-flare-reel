@@ -169,11 +169,11 @@ object ReelLayout {
             if (remaining <= 0) break
             val words = sourceLine.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
             if (words.isEmpty()) {
-                if (lineIndex < sourceLines.lastIndex && out.isNotEmpty()) out.append('\\n')
+                if (lineIndex < sourceLines.lastIndex && out.isNotEmpty()) out.append('\n')
                 continue
             }
             val take = minOf(words.size, remaining)
-            if (out.isNotEmpty() && lineIndex > 0) out.append('\\n')
+            if (out.isNotEmpty() && lineIndex > 0) out.append('\n')
             out.append(words.take(take).joinToString(" "))
             remaining -= take
             if (take < words.size) break
