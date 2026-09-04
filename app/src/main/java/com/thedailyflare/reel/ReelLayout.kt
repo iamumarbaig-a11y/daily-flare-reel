@@ -164,7 +164,7 @@ object ReelLayout {
 
         // Process each user-entered line independently so an explicit newline
         // is never collapsed into a space by the animation.
-        val sourceLines = value.split("\\n")
+        val sourceLines = value.split("\n")
         for ((lineIndex, sourceLine) in sourceLines.withIndex()) {
             if (remaining <= 0) break
             val words = sourceLine.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
