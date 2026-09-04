@@ -127,10 +127,12 @@ object ReelLayout {
         for (headline in headlines.take(7)) {
             if (headline.isBlank() || remainingWords <= 0) break
 
-            val words = headline.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+            // Count/reveal words without destroying explicit line breaks entered
+            // by the user. Newlines affect display only; narration remains unchanged.
+            val words = headline.trim().split(Regex("[\\s\\n]+")).filter { it.isNotBlank() }
             val take = minOf(words.size, remainingWords)
             if (take <= 0) break
-            val visibleText = words.take(take).joinToString(" ")
+            val visibleText = visiblePrefixPreservingLineBreaks(headline, take)
             remainingWords -= take
 
             val lines = wrap(visibleText, textPaint, maxTextWidth)
@@ -153,6 +155,30 @@ object ReelLayout {
                 if (y > H - 80f) return
             }
         }
+    }
+
+    private fun visiblePrefixPreservingLineBreaks(value: String, maxWords: Int): String {
+        if (maxWords <= 0) return ""
+        var remaining = maxWords
+        val out = StringBuilder()
+
+        // Process each user-entered line independently so an explicit newline
+        // is never collapsed into a space by the animation.
+        val sourceLines = value.split("\\n")
+        for ((lineIndex, sourceLine) in sourceLines.withIndex()) {
+            if (remaining <= 0) break
+            val words = sourceLine.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+            if (words.isEmpty()) {
+                if (lineIndex < sourceLines.lastIndex && out.isNotEmpty()) out.append('\\n')
+                continue
+            }
+            val take = minOf(words.size, remaining)
+            if (out.isNotEmpty() && lineIndex > 0) out.append('\\n')
+            out.append(words.take(take).joinToString(" "))
+            remaining -= take
+            if (take < words.size) break
+        }
+        return out.toString()
     }
 
     private fun wrap(value: String, paint: Paint, maxWidth: Float): List<String> {
