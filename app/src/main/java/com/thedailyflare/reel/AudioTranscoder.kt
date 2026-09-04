@@ -13,7 +13,8 @@ import kotlin.math.floor
 /** Decodes selected music and re-encodes it as AAC so MP4 muxing is reliable. */
 class AudioTranscoder(private val context: Context) {
     companion object {
-        private const val MUSIC_VOLUME = 0.15f
+        private const val MUSIC_VOLUME = 0.10f
+        private const val VOICE_TARGET_PEAK = 26000
     }
 
     fun transcode(uri: Uri, output: File): Boolean {
@@ -110,8 +111,10 @@ class AudioTranscoder(private val context: Context) {
             val targetRate = music.sampleRate
             val targetChannels = music.channels
             val musicSamples = toTarget(music, targetRate, targetChannels)
-            val voiceSamples = toTarget(voice, targetRate, targetChannels)
-            val ctaSamples = ctaVoice?.let { toTarget(it, targetRate, targetChannels) } ?: ShortArray(0)
+            // Normalize each Kokoro voice track to a consistent peak before mixing.
+            // This prevents naturally quieter voices from making the same music level feel louder.
+            val voiceSamples = normalizeVoice(toTarget(voice, targetRate, targetChannels))
+            val ctaSamples = ctaVoice?.let { normalizeVoice(toTarget(it, targetRate, targetChannels)) } ?: ShortArray(0)
             // Main narration followed by CTA speech; silence naturally fills any remaining CTA time.
             val totalSamples = voiceSamples.size + ctaSamples.size
             val mixed = ByteArray(totalSamples * 2)
@@ -212,6 +215,20 @@ class AudioTranscoder(private val context: Context) {
             return PcmData(samples, sampleRate, channels)
         } finally {
             extractor.release()
+        }
+    }
+
+    private fun normalizeVoice(samples: ShortArray): ShortArray {
+        if (samples.isEmpty()) return samples
+        var peak = 0
+        for (sample in samples) {
+            val magnitude = if (sample == Short.MIN_VALUE) 32768 else kotlin.math.abs(sample.toInt())
+            if (magnitude > peak) peak = magnitude
+        }
+        if (peak == 0) return samples
+        val gain = VOICE_TARGET_PEAK.toFloat() / peak.toFloat()
+        return ShortArray(samples.size) { index ->
+            (samples[index].toInt() * gain).toInt().coerceIn(-32768, 32767).toShort()
         }
     }
 
