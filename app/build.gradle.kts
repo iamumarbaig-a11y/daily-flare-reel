@@ -17,8 +17,8 @@ android {
         applicationId = "com.thedailyflare.reel"
         minSdk = 26
         targetSdk = 35
-        versionCode = 43
-        versionName = "43-kokoro-emoji-and-linebreak-fix"
+        versionCode = 44
+        versionName = "44-linebreak-display-fix"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
