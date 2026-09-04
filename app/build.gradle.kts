@@ -17,8 +17,8 @@ android {
         applicationId = "com.thedailyflare.reel"
         minSdk = 26
         targetSdk = 35
-        versionCode = 42
-        versionName = "42-kokoro-emoji-speech-cleanup"
+        versionCode = 43
+        versionName = "43-kokoro-emoji-and-linebreak-fix"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
