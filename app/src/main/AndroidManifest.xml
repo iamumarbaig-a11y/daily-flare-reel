@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-    <application android:theme="@style/AppTheme" android:label="Daily Flare Reel" android:allowBackup="false" android:supportsRtl="true">
+    <application android:theme="@style/AppTheme" android:label="Daily Flare Reel" android:icon="@drawable/daily_flare_logo" android:allowBackup="false" android:supportsRtl="true">
         <activity android:name=".KokoroExperimentActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
             <intent-filter>
