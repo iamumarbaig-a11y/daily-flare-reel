@@ -37,12 +37,18 @@ class ReelEncoder(private val context: Context) {
         val totalFrames = mainFrames + ctaFrames
 
         val bodyWordCount = ReelLayout.bodyWordCount(headlines)
+        val headlineWordCounts = headlines.take(7).map { headline ->
+            headline.trim().split(Regex("\\s+")).count { it.isNotBlank() }
+        }
+        val headlineSpeechWeights = headlines.take(7).map { speechWeight(it) }
         encodeFrames(
             background,
             ctaBitmap,
             title,
             headlines,
             bodyWordCount,
+            headlineWordCounts,
+            headlineSpeechWeights,
             voiceDurationMs,
             titleSpeechMs,
             mainFrames,
@@ -59,6 +65,8 @@ class ReelEncoder(private val context: Context) {
         title: String,
         headlines: List<String>,
         bodyWordCount: Int,
+        headlineWordCounts: List<Int>,
+        headlineSpeechWeights: List<Float>,
         voiceDurationMs: Long,
         titleSpeechMs: Long,
         mainFrames: Int,
@@ -78,6 +86,7 @@ class ReelEncoder(private val context: Context) {
             3 * fps
         }
         val revealFrames = narrationFrames.coerceIn(1, mainFrames - titleDelayFrames.coerceAtMost(mainFrames - 1))
+        val segmentFrames = allocateSegmentFrames(revealFrames, headlineWordCounts, headlineSpeechWeights)
 
         val format = MediaFormat.createVideoFormat("video/avc", width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
@@ -115,16 +124,16 @@ class ReelEncoder(private val context: Context) {
                         val smoothProgress = progress * progress * (3f - 2f * progress)
                         drawZoomedCover(canvas, background, width, height, 1f + 0.18f * smoothProgress)
 
-                        // Title is immediate. The body reveal follows the measured
-                        // narration duration, giving the reader a visual pace close
-                        // to the selected TTS voice.
-                        val visibleWords = if (bodyWordCount == 0) {
-                            0
-                        } else {
-                            val revealProgress =
-                                ((frame - titleDelayFrames + 1).toFloat() / revealFrames.toFloat()).coerceIn(0f, 1f)
-                            kotlin.math.ceil(bodyWordCount * revealProgress).toInt()
-                        }
+                        // Title is immediate. Body words still appear one by one,
+                        // but each subheading gets its own slice of the measured
+                        // narration time. This avoids forcing every sentence to reveal
+                        // at one constant speed when Kokoro naturally changes pace.
+                        val visibleWords = visibleWordsAtFrame(
+                            frame = frame,
+                            titleDelayFrames = titleDelayFrames,
+                            headlineWordCounts = headlineWordCounts,
+                            segmentFrames = segmentFrames
+                        )
 
                         ReelLayout.draw(
                             canvas,
@@ -204,6 +213,80 @@ class ReelEncoder(private val context: Context) {
             codec.release()
         }
         require(output.exists() && output.length() > 0L) { "18-second video produced no output" }
+    }
+
+
+    private fun speechWeight(text: String): Float {
+        if (text.isBlank()) return 0f
+        var weight = 0f
+        for (ch in text) {
+            when {
+                ch.isWhitespace() -> Unit
+                ch.isLetterOrDigit() -> weight += 1f
+                ch == ',' || ch == ';' || ch == ':' -> weight += 3f
+                ch == '.' || ch == '!' || ch == '?' -> weight += 6f
+                else -> weight += 1f
+            }
+        }
+        // A small word component prevents very short words from making a
+        // segment unrealistically fast while keeping the text itself unchanged.
+        val words = text.trim().split(Regex("\\s+")).count { it.isNotBlank() }
+        return weight + words * 2f
+    }
+
+    private fun allocateSegmentFrames(
+        totalFrames: Int,
+        wordCounts: List<Int>,
+        weights: List<Float>
+    ): IntArray {
+        if (wordCounts.isEmpty()) return IntArray(0)
+        val active = wordCounts.indices.filter { wordCounts[it] > 0 }
+        val result = IntArray(wordCounts.size)
+        if (active.isEmpty()) return result
+
+        val totalWeight = active.sumOf { weights.getOrElse(it) { 0f }.toDouble() }.toFloat()
+        var used = 0
+        for ((position, index) in active.withIndex()) {
+            val remainingSlots = active.size - position - 1
+            val frames = if (position == active.lastIndex) {
+                (totalFrames - used).coerceAtLeast(1)
+            } else {
+                val share = if (totalWeight > 0f) {
+                    totalFrames.toFloat() * weights.getOrElse(index) { 0f } / totalWeight
+                } else {
+                    totalFrames.toFloat() / active.size
+                }
+                share.toInt().coerceAtLeast(1).coerceAtMost((totalFrames - used - remainingSlots).coerceAtLeast(1))
+            }
+            result[index] = frames
+            used += frames
+        }
+        return result
+    }
+
+    private fun visibleWordsAtFrame(
+        frame: Int,
+        titleDelayFrames: Int,
+        headlineWordCounts: List<Int>,
+        segmentFrames: IntArray
+    ): Int {
+        var elapsed = (frame - titleDelayFrames + 1).coerceAtLeast(0)
+        var visible = 0
+
+        for (index in headlineWordCounts.indices) {
+            val words = headlineWordCounts[index]
+            if (words <= 0) continue
+            val duration = segmentFrames.getOrElse(index) { 0 }.coerceAtLeast(1)
+            if (elapsed >= duration) {
+                visible += words
+                elapsed -= duration
+            } else {
+                val progress = elapsed.toFloat() / duration.toFloat()
+                visible += kotlin.math.ceil(words * progress).toInt().coerceIn(0, words)
+                break
+            }
+        }
+        return visible
     }
 
     private fun drawZoomedCover(
