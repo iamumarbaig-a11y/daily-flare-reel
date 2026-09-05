@@ -13,6 +13,7 @@ import kotlin.math.floor
 /** Decodes selected music and re-encodes it as AAC so MP4 muxing is reliable. */
 class AudioTranscoder(private val context: Context) {
     companion object {
+        private const val MUSIC_VOLUME = 0.10f
         private const val VOICE_TARGET_PEAK = 26000
     }
 
