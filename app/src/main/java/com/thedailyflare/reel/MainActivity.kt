@@ -371,7 +371,12 @@ class MainActivity : Activity() {
                     }
                 }
 
-                val measuredTitleSpeechMs = timingDurationsMs.firstOrNull() ?: 0L
+                // Isolated clips can contain slightly different edge silence from
+                // the continuous narration. Keep their relative timing, but scale the
+                // complete measured timeline to the actual final narration duration.
+                val totalMeasuredSpeechMs = timingDurationsMs.sum().coerceAtLeast(1L)
+                val measuredTitleSpeechMs = ((timingDurationsMs.firstOrNull() ?: 0L).toDouble()
+                    * voiceDurationMs.toDouble() / totalMeasuredSpeechMs.toDouble()).toLong()
                 val measuredHeadlineDurationsMs = headlines.indices.map { index ->
                     timingDurationsMs.getOrElse(index + 1) { 0L }
                 }
