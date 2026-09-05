@@ -2,6 +2,7 @@ package com.thedailyflare.reel
 
 import android.app.Activity
 import android.content.ContentValues
+import android.content.SharedPreferences
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -50,8 +51,16 @@ class MainActivity : Activity() {
     private var mainBitmap: Bitmap? = null
     private var ctaBitmap: Bitmap? = null
     private var musicUri: Uri? = null
+    private lateinit var musicIntensitySpinner: Spinner
+    private lateinit var preferences: SharedPreferences
+    private val musicIntensities = listOf(5, 10, 15, 20)
 
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); buildUi() }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        preferences = getSharedPreferences("daily_flare_reel_preferences", MODE_PRIVATE)
+        buildUi()
+        restorePersistentSelections()
+    }
 
     override fun onResume() {
         super.onResume()
@@ -89,6 +98,9 @@ class MainActivity : Activity() {
         speedSpinner = Spinner(this)
         speedSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceSpeeds.map { it.toString() + "×" })
         speedSpinner.setSelection(voiceSpeeds.indexOf(1.0f))
+        speedSpinner.onItemSelectedListener = simpleSelectionListener { position ->
+            preferences.edit().putFloat("voice_speed", voiceSpeeds.getOrElse(position) { 1.0f }).apply()
+        }
         root.addView(speedSpinner, lp())
         voiceTts = VoiceTts(this)
         voiceSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
@@ -97,6 +109,7 @@ class MainActivity : Activity() {
             }
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
                 selectedVoice = voiceOptions.getOrNull(position)
+                selectedVoice?.name?.let { preferences.edit().putString("voice_name", it).apply() }
             }
         }
         refreshKokoroState()
@@ -105,6 +118,14 @@ class MainActivity : Activity() {
         section(root, "4. MUSIC — ALL 18 SECONDS")
         root.addView(button("CHOOSE MUSIC") { pickAudio() }, lp())
         musicLabel = label("No music selected"); root.addView(musicLabel, lp())
+        root.addView(TextView(this).apply { text = "MUSIC INTENSITY"; textSize = 14f }, lp())
+        musicIntensitySpinner = Spinner(this)
+        musicIntensitySpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, musicIntensities.map { "$it%" })
+        musicIntensitySpinner.setSelection(musicIntensities.indexOf(10))
+        musicIntensitySpinner.onItemSelectedListener = simpleSelectionListener { position ->
+            preferences.edit().putInt("music_intensity", musicIntensities.getOrElse(position) { 10 }).apply()
+        }
+        root.addView(musicIntensitySpinner, lp())
         exportStatus = label("Ready to export")
         root.addView(exportStatus, lp())
         exportProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0 }
@@ -124,7 +145,8 @@ class MainActivity : Activity() {
                 voiceOptions = options
                 val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options.map { it.label })
                 voiceSpinner.adapter = adapter
-                val restoredIndex = options.indexOfFirst { it.name == previousName }
+                val persistedVoiceName = preferences.getString("voice_name", null)
+                val restoredIndex = options.indexOfFirst { it.name == (persistedVoiceName ?: previousName) }
                     .takeIf { it >= 0 } ?: 0
                 if (options.isNotEmpty()) {
                     voiceSpinner.setSelection(restoredIndex, false)
@@ -160,9 +182,35 @@ class MainActivity : Activity() {
         try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
         when (requestCode) {
             100 -> { mainBitmap = decodePortrait(uri); preview.backgroundBitmap = mainBitmap; mainImageLabel.text = "Main image selected"; refreshPreview() }
-            101 -> { ctaBitmap = decodePortrait(uri); preview.ctaBitmap = ctaBitmap; ctaImageLabel.text = "CTA image selected"; preview.invalidate() }
-            102 -> { musicUri = uri; musicLabel.text = "Music selected" }
+            101 -> { ctaBitmap = decodePortrait(uri); preview.ctaBitmap = ctaBitmap; ctaImageLabel.text = "CTA image selected"; preferences.edit().putString("cta_uri", uri.toString()).apply(); preview.invalidate() }
+            102 -> { musicUri = uri; musicLabel.text = "Music selected"; preferences.edit().putString("music_uri", uri.toString()).apply() }
         }
+    }
+
+    private fun restorePersistentSelections() {
+        val savedSpeed = preferences.getFloat("voice_speed", 1.0f)
+        speedSpinner.setSelection(voiceSpeeds.indexOf(savedSpeed).takeIf { it >= 0 } ?: voiceSpeeds.indexOf(1.0f))
+        val savedIntensity = preferences.getInt("music_intensity", 10)
+        musicIntensitySpinner.setSelection(musicIntensities.indexOf(savedIntensity).takeIf { it >= 0 } ?: musicIntensities.indexOf(10))
+        preferences.getString("cta_uri", null)?.let { restoreCta(Uri.parse(it)) }
+        preferences.getString("music_uri", null)?.let { restoreMusic(Uri.parse(it)) }
+    }
+
+    private fun restoreCta(uri: Uri) {
+        val bitmap = decodePortrait(uri) ?: return
+        ctaBitmap = bitmap; preview.ctaBitmap = bitmap; ctaImageLabel.text = "CTA image selected"; preview.invalidate()
+    }
+
+    private fun restoreMusic(uri: Uri) {
+        try {
+            contentResolver.openInputStream(uri)?.close()
+            musicUri = uri; musicLabel.text = "Music selected"
+        } catch (_: Exception) { }
+    }
+
+    private fun simpleSelectionListener(onSelected: (Int) -> Unit) = object : android.widget.AdapterView.OnItemSelectedListener {
+        override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+        override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) = onSelected(position)
     }
 
     private fun decodePortrait(uri: Uri): Bitmap? {
@@ -316,7 +364,7 @@ class MainActivity : Activity() {
                 voiceTts.speakToFile("FOLLOW THE DAILY FLARE ON SOCIAL MEDIA.", selectedVoiceOption, ctaVoice, selectedSpeed) { ok, _ -> ctaOk = ok; ctaLatch.countDown() }
                 if (!ctaLatch.await(30, TimeUnit.SECONDS) || !ctaOk || !ctaVoice.exists() || ctaVoice.length() == 0L) throw IllegalStateException("CTA voice generation failed")
                 runOnUiThread { exportProgress.progress = 88; exportStatus.text = "Mixing voice and music..." }
-                if (!AudioTranscoder(this).transcodeMixed(music, voice, audio, ctaVoice) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Voice and music could not be mixed")
+                if (!AudioTranscoder(this).transcodeMixed(music, voice, audio, ctaVoice, musicIntensities.getOrElse(musicIntensitySpinner.selectedItemPosition) { 10 } / 100f) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Voice and music could not be mixed")
                 runOnUiThread { exportProgress.progress = 95; exportStatus.text = "Finalizing video..." }
                 if (!AudioMuxer().mux(video, audio, output) || !output.exists() || output.length() == 0L) throw IllegalStateException("Audio/video muxing failed")
                 val saved = saveToGallery(output)
