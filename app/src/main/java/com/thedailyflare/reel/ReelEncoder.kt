@@ -24,6 +24,7 @@ class ReelEncoder(private val context: Context) {
         headlines: List<String>,
         voiceDurationMs: Long,
         titleSpeechMs: Long,
+        headlineSpeechDurationsMs: List<Long>,
         output: File,
         drain: Drain? = null
     ) {
@@ -40,7 +41,6 @@ class ReelEncoder(private val context: Context) {
         val headlineWordCounts = headlines.take(7).map { headline ->
             headline.trim().split(Regex("\\s+")).count { it.isNotBlank() }
         }
-        val headlineSpeechWeights = headlines.take(7).map { speechWeight(it) }
         encodeFrames(
             background,
             ctaBitmap,
@@ -48,7 +48,7 @@ class ReelEncoder(private val context: Context) {
             headlines,
             bodyWordCount,
             headlineWordCounts,
-            headlineSpeechWeights,
+            headlineSpeechDurationsMs,
             voiceDurationMs,
             titleSpeechMs,
             mainFrames,
@@ -66,7 +66,7 @@ class ReelEncoder(private val context: Context) {
         headlines: List<String>,
         bodyWordCount: Int,
         headlineWordCounts: List<Int>,
-        headlineSpeechWeights: List<Float>,
+        headlineSpeechDurationsMs: List<Long>,
         voiceDurationMs: Long,
         titleSpeechMs: Long,
         mainFrames: Int,
@@ -86,7 +86,7 @@ class ReelEncoder(private val context: Context) {
             3 * fps
         }
         val revealFrames = narrationFrames.coerceIn(1, mainFrames - titleDelayFrames.coerceAtMost(mainFrames - 1))
-        val segmentFrames = allocateSegmentFrames(revealFrames, headlineWordCounts, headlineSpeechWeights)
+        val segmentFrames = allocateSegmentFrames(revealFrames, headlineWordCounts, headlineSpeechDurationsMs)
 
         val format = MediaFormat.createVideoFormat("video/avc", width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
@@ -216,47 +216,34 @@ class ReelEncoder(private val context: Context) {
     }
 
 
-    private fun speechWeight(text: String): Float {
-        if (text.isBlank()) return 0f
-        var weight = 0f
-        for (ch in text) {
-            when {
-                ch.isWhitespace() -> Unit
-                ch.isLetterOrDigit() -> weight += 1f
-                ch == ',' || ch == ';' || ch == ':' -> weight += 3f
-                ch == '.' || ch == '!' || ch == '?' -> weight += 6f
-                else -> weight += 1f
-            }
-        }
-        // A small word component prevents very short words from making a
-        // segment unrealistically fast while keeping the text itself unchanged.
-        val words = text.trim().split(Regex("\\s+")).count { it.isNotBlank() }
-        return weight + words * 2f
-    }
-
     private fun allocateSegmentFrames(
         totalFrames: Int,
         wordCounts: List<Int>,
-        weights: List<Float>
+        measuredDurationsMs: List<Long>
     ): IntArray {
         if (wordCounts.isEmpty()) return IntArray(0)
         val active = wordCounts.indices.filter { wordCounts[it] > 0 }
         val result = IntArray(wordCounts.size)
         if (active.isEmpty()) return result
 
-        val totalWeight = active.sumOf { weights.getOrElse(it) { 0f }.toDouble() }.toFloat()
+        // Isolated Kokoro renders are timing anchors. Scale them to the actual
+        // body duration of the continuous narration so the final word still
+        // reaches the real narration endpoint.
+        val totalMeasured = active.sumOf { index ->
+            measuredDurationsMs.getOrElse(index) { 0L }.coerceAtLeast(1L)
+        }.coerceAtLeast(1L)
         var used = 0
+
         for ((position, index) in active.withIndex()) {
             val remainingSlots = active.size - position - 1
             val frames = if (position == active.lastIndex) {
                 (totalFrames - used).coerceAtLeast(1)
             } else {
-                val share = if (totalWeight > 0f) {
-                    totalFrames.toFloat() * weights.getOrElse(index) { 0f } / totalWeight
-                } else {
-                    totalFrames.toFloat() / active.size
-                }
-                share.toInt().coerceAtLeast(1).coerceAtMost((totalFrames - used - remainingSlots).coerceAtLeast(1))
+                val measured = measuredDurationsMs.getOrElse(index) { 0L }.coerceAtLeast(1L)
+                val share = totalFrames.toDouble() * measured.toDouble() / totalMeasured.toDouble()
+                share.toInt()
+                    .coerceAtLeast(1)
+                    .coerceAtMost((totalFrames - used - remainingSlots).coerceAtLeast(1))
             }
             result[index] = frames
             used += frames
