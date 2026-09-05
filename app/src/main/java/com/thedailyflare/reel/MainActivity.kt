@@ -340,20 +340,54 @@ class MainActivity : Activity() {
                 }
 
                 val voiceDurationMs = getAudioDurationMs(voice)
-                // Estimate the spoken headline from character weight rather than raw
-                // word count. Word-count ratios were consistently overestimating the
-                // headline and leaving an empty pause before body words appeared.
-                val spokenCharacters = speechText.count { !it.isWhitespace() && it != '.' && it != ',' }
-                val titleCharacters = title.count { !it.isWhitespace() && it != '.' && it != ',' }
-                val rawTitleSpeechMs = if (spokenCharacters > 0) {
-                    voiceDurationMs * titleCharacters / spokenCharacters
-                } else 0L
-                // Start body text slightly early to remove the visible dead gap after
-                // the spoken headline while keeping the headline itself immediate.
-                val titleSpeechMs = (rawTitleSpeechMs - 250L).coerceAtLeast(0L)
-                ReelEncoder(this).encode(bg, cta, title, headlines, voiceDurationMs, titleSpeechMs, video, object : ReelEncoder.Drain {
+
+                // Kokoro does not expose word timestamps. Measure the title and every
+                // subheading with the exact selected voice and speed, then use those
+                // real durations only for the visual timeline. The final narration
+                // remains the original single continuous Kokoro render.
+                runOnUiThread { exportProgress.progress = 8; exportStatus.text = "Measuring narration timing..." }
+                val timingTexts = listOf(title) + headlines
+                val timingDurationsMs = MutableList(timingTexts.size) { 0L }
+
+                timingTexts.forEachIndexed { index, timingText ->
+                    if (timingText.isBlank()) return@forEachIndexed
+                    val timingFile = File(cacheDir, "daily_flare_timing_$index.wav")
+                    timingFile.delete()
+                    val timingLatch = CountDownLatch(1)
+                    var timingOk = false
+                    voiceTts.speakToFile(timingText, selectedVoiceOption, timingFile, selectedSpeed) { ok, _ ->
+                        timingOk = ok
+                        timingLatch.countDown()
+                    }
+                    if (!timingLatch.await(60, TimeUnit.SECONDS) || !timingOk || !timingFile.exists() || timingFile.length() == 0L) {
+                        throw IllegalStateException("Kokoro timing measurement failed")
+                    }
+                    timingDurationsMs[index] = getAudioDurationMs(timingFile)
+                    timingFile.delete()
+                    val timingPercent = 8 + (((index + 1) * 12) / timingTexts.size.coerceAtLeast(1))
+                    runOnUiThread {
+                        exportProgress.progress = timingPercent
+                        exportStatus.text = "Measuring narration timing... ${index + 1}/${timingTexts.size}"
+                    }
+                }
+
+                val measuredTitleSpeechMs = timingDurationsMs.firstOrNull() ?: 0L
+                val measuredHeadlineDurationsMs = headlines.indices.map { index ->
+                    timingDurationsMs.getOrElse(index + 1) { 0L }
+                }
+
+                ReelEncoder(this).encode(
+                    bg,
+                    cta,
+                    title,
+                    headlines,
+                    voiceDurationMs,
+                    measuredTitleSpeechMs,
+                    measuredHeadlineDurationsMs,
+                    video,
+                    object : ReelEncoder.Drain {
                     override fun onFrame(frame: Int, total: Int) {
-                        val percent = ((frame * 80L) / total.coerceAtLeast(1)).toInt()
+                        val percent = 20 + ((frame * 60L) / total.coerceAtLeast(1)).toInt()
                         runOnUiThread { exportProgress.progress = percent; exportStatus.text = "Rendering video... $percent%" }
                     }
                 })
