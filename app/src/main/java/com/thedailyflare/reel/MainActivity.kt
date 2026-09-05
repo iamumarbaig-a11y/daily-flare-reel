@@ -97,7 +97,8 @@ class MainActivity : Activity() {
         root.addView(TextView(this).apply { text = "VOICE SPEED"; textSize = 14f }, lp())
         speedSpinner = Spinner(this)
         speedSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceSpeeds.map { it.toString() + "×" })
-        speedSpinner.setSelection(voiceSpeeds.indexOf(1.0f))
+        val savedSpeed = preferences.getFloat("voice_speed", 1.0f)
+        speedSpinner.setSelection(voiceSpeeds.indexOf(savedSpeed).takeIf { it >= 0 } ?: voiceSpeeds.indexOf(1.0f), false)
         speedSpinner.onItemSelectedListener = simpleSelectionListener { position ->
             preferences.edit().putFloat("voice_speed", voiceSpeeds.getOrElse(position) { 1.0f }).apply()
         }
@@ -121,7 +122,8 @@ class MainActivity : Activity() {
         root.addView(TextView(this).apply { text = "MUSIC INTENSITY"; textSize = 14f }, lp())
         musicIntensitySpinner = Spinner(this)
         musicIntensitySpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, musicIntensities.map { "$it%" })
-        musicIntensitySpinner.setSelection(musicIntensities.indexOf(10))
+        val savedMusicIntensity = preferences.getInt("music_intensity", 10)
+        musicIntensitySpinner.setSelection(musicIntensities.indexOf(savedMusicIntensity).takeIf { it >= 0 } ?: musicIntensities.indexOf(10), false)
         musicIntensitySpinner.onItemSelectedListener = simpleSelectionListener { position ->
             preferences.edit().putInt("music_intensity", musicIntensities.getOrElse(position) { 10 }).apply()
         }
@@ -188,10 +190,8 @@ class MainActivity : Activity() {
     }
 
     private fun restorePersistentSelections() {
-        val savedSpeed = preferences.getFloat("voice_speed", 1.0f)
-        speedSpinner.setSelection(voiceSpeeds.indexOf(savedSpeed).takeIf { it >= 0 } ?: voiceSpeeds.indexOf(1.0f))
-        val savedIntensity = preferences.getInt("music_intensity", 10)
-        musicIntensitySpinner.setSelection(musicIntensities.indexOf(savedIntensity).takeIf { it >= 0 } ?: musicIntensities.indexOf(10))
+        // Spinner values are restored before their listeners are attached so the
+        // saved preferences cannot be overwritten by the default UI selection.
         preferences.getString("cta_uri", null)?.let { restoreCta(Uri.parse(it)) }
         preferences.getString("music_uri", null)?.let { restoreMusic(Uri.parse(it)) }
     }
