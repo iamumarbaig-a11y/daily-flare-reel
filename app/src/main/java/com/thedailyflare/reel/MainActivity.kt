@@ -7,6 +7,9 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.graphics.drawable.GradientDrawable
+import android.text.Editable
+import android.text.TextWatcher
 import android.media.MediaPlayer
 import android.media.MediaMetadataRetriever
 import android.net.Uri
@@ -50,6 +53,9 @@ class MainActivity : Activity() {
     private var selectedVoice: VoiceTts.VoiceOption? = null
     private lateinit var titleInput: EditText
     private val headlineInputs = mutableListOf<EditText>()
+    private lateinit var previewFrame: FrameLayout
+    private lateinit var activePreviewEditor: EditText
+    private var activeEditorIndex = -1
     private var mainBitmap: Bitmap? = null
     private var ctaBitmap: Bitmap? = null
     private var musicUri: Uri? = null
@@ -79,34 +85,50 @@ class MainActivity : Activity() {
         root.addView(button("CHOOSE MAIN IMAGE") { pickImage(100) }, lp())
         mainImageLabel = label("No main image selected"); root.addView(mainImageLabel, lp())
 
-        // The editor lives directly on the preview. This keeps the existing text
-        // objects and export logic unchanged, but lets the user tap and type where
-        // the heading will visually appear instead of using controls below.
-        val previewFrame = FrameLayout(this)
-        preview = ReelPreviewView(this).apply { setBackgroundColor(0xFFEFEFEF.toInt()) }
+        // The preview always draws the real final ReelLayout. Editing is done
+        // directly over the tapped text block, so the normal state is true WYSIWYG.
+        previewFrame = FrameLayout(this)
+        preview = ReelPreviewView(this).apply {
+            setBackgroundColor(0xFFEFEFEF.toInt())
+            setOnTouchListener { view, event ->
+                if (event.action == android.view.MotionEvent.ACTION_UP) openEditorForPreviewY(event.y, view.height)
+                true
+            }
+        }
         previewFrame.addView(preview, FrameLayout.LayoutParams(-1, -2))
 
-        val textOverlay = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(28, 0, 28, 0)
+        titleInput = EditText(this)
+        for (i in 1..7) headlineInputs.add(EditText(this))
+
+        activePreviewEditor = EditText(this).apply {
+            visibility = android.view.View.GONE
+            setTextColor(0xFF111111.toInt())
+            setHintTextColor(0x66000000.toInt())
+            typeface = android.graphics.Typeface.create("sans", android.graphics.Typeface.BOLD)
+            setSingleLine(false)
+            maxLines = 3
+            textSize = 20f
+            setPadding(dp(14), dp(7), dp(14), dp(7))
+            background = GradientDrawable().apply {
+                setColor(0xF7FFFFFF.toInt())
+                cornerRadius = dp(10).toFloat()
+            }
+            setOnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus) closePreviewEditor()
+            }
         }
-        previewFrame.addView(
-            textOverlay,
-            FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply { topMargin = 112 }
-        )
-
-        titleInput = editOnPreview("Main heading", true)
-        textOverlay.addView(titleInput, overlayLp())
-        titleInput.setOnFocusChangeListener { _, _ -> refreshPreview() }
-
-        for (i in 1..7) {
-            val input = editOnPreview("Subheading $i", false)
-            headlineInputs.add(input)
-            textOverlay.addView(input, overlayLp())
-            input.setOnFocusChangeListener { _, _ -> refreshPreview() }
-        }
-
+        activePreviewEditor.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                if (activeEditorIndex < 0) return
+                targetInput(activeEditorIndex)?.setText(s ?: "")
+                refreshPreview()
+            }
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
+        previewFrame.addView(activePreviewEditor)
         root.addView(previewFrame, lp())
+
         section(root, "2. 3-SECOND CTA IMAGE")
         root.addView(button("CHOOSE CTA IMAGE") { pickImage(101) }, lp())
         ctaImageLabel = label("No CTA image selected"); root.addView(ctaImageLabel, lp())
@@ -190,26 +212,79 @@ class MainActivity : Activity() {
         })
     }
 
-    private fun editOnPreview(h: String, heading: Boolean) = EditText(this).apply {
-        hint = h
-        textSize = if (heading) 18f else 15f
-        setTextColor(0xFF000000.toInt())
-        setHintTextColor(0x99000000.toInt())
-        typeface = android.graphics.Typeface.create("sans", android.graphics.Typeface.BOLD)
-        setSingleLine(false)
-        maxLines = 2
-        setPadding(14, 6, 14, 6)
-        background = android.graphics.drawable.ColorDrawable(0xEFFFFFFF.toInt())
-    }
-    private fun overlayLp() = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-        bottomMargin = 6
+    private fun openEditorForPreviewY(y: Float, previewHeight: Int) {
+        if (previewHeight <= 0) return
+        val normalized = y / previewHeight.toFloat()
+        val index = when {
+            normalized < 0.30f -> 0
+            else -> (((normalized - 0.30f) / 0.085f).toInt() + 1).coerceIn(1, 7)
+        }
+        openPreviewEditor(index, previewHeight)
     }
 
-    private fun section(root: LinearLayout, value: String) { root.addView(TextView(this).apply { text = value; textSize = 18f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 16, 0, 6) }, lp()) }
-    private fun edit(h: String, lines: Int) = EditText(this).apply { hint = h; textSize = 18f; minLines = lines; setSingleLine(false) }
-    private fun button(t: String, action: () -> Unit) = Button(this).apply { text = t; textSize = 16f; setOnClickListener { action() } }
-    private fun label(t: String) = TextView(this).apply { text = t; textSize = 16f; setPadding(0, 4, 0, 4) }
-    private fun lp() = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
+    private fun openPreviewEditor(index: Int, previewHeight: Int) {
+        activeEditorIndex = index
+        val source = targetInput(index) ?: return
+        activePreviewEditor.setText(source.text)
+        activePreviewEditor.hint = if (index == 0) "Main heading" else "Subheading $index"
+        activePreviewEditor.textSize = if (index == 0) 20f else 17f
+        val topRatio = if (index == 0) 0.15f else 0.29f + ((index - 1) * 0.075f)
+        val params = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            leftMargin = dp(18)
+            rightMargin = dp(18)
+            topMargin = (previewHeight * topRatio).toInt()
+        }
+        activePreviewEditor.layoutParams = params
+        activePreviewEditor.visibility = android.view.View.VISIBLE
+        activePreviewEditor.requestFocus()
+        activePreviewEditor.setSelection(activePreviewEditor.text.length)
+        refreshPreview()
+    }
+
+    private fun closePreviewEditor() {
+        if (!::activePreviewEditor.isInitialized || activeEditorIndex < 0) return
+        activePreviewEditor.visibility = android.view.View.GONE
+        activeEditorIndex = -1
+        refreshPreview()
+    }
+
+    private fun targetInput(index: Int): EditText? =
+        if (index == 0) titleInput else headlineInputs.getOrNull(index - 1)
+
+    private fun section(root: LinearLayout, value: String) {
+        root.addView(TextView(this).apply {
+            text = value; textSize = 18f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 20, 0, 8)
+        }, lp())
+    }
+
+    private fun button(t: String, action: () -> Unit) = Button(this).apply {
+        text = t
+        textSize = 15f
+        setTextColor(0xFFFFFFFF.toInt())
+        isAllCaps = false
+        typeface = android.graphics.Typeface.create("sans", android.graphics.Typeface.BOLD)
+        minHeight = dp(52)
+        setPadding(dp(20), 0, dp(20), 0)
+        background = GradientDrawable().apply {
+            setColor(0xFF172A3A.toInt())
+            cornerRadius = dp(18).toFloat()
+        }
+        elevation = dp(3).toFloat()
+        setOnClickListener { action() }
+    }
+
+    private fun label(t: String) = TextView(this).apply {
+        text = t; textSize = 16f; setTextColor(0xFF5D646B.toInt()); setPadding(0, dp(6), 0, dp(6))
+    }
+
+    private fun lp() = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        topMargin = dp(4); bottomMargin = dp(4)
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun pickImage(code: Int) { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "image/*"; addCategory(Intent.CATEGORY_OPENABLE); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) }, code) }
     private fun pickAudio() { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "audio/*"; addCategory(Intent.CATEGORY_OPENABLE); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) }, 102) }
@@ -279,10 +354,9 @@ class MainActivity : Activity() {
     }
 
     private fun refreshPreview() {
-        // Text is rendered by the editable controls directly on top of the preview.
-        // Export still reads the same titleInput/headlineInputs objects.
-        preview.title = ""
-        preview.headlines = emptyList()
+        // Normal preview is the exact same renderer used by export.
+        preview.title = titleInput.text.toString().trim().ifBlank { "Main heading" }
+        preview.headlines = headlineInputs.map { it.text.toString().trim() }
         preview.invalidate()
     }
 
