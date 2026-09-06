@@ -84,7 +84,7 @@ class MainActivity : Activity() {
         // the heading will visually appear instead of using controls below.
         val previewFrame = FrameLayout(this)
         preview = ReelPreviewView(this).apply { setBackgroundColor(0xFFEFEFEF.toInt()) }
-        previewFrame.addView(preview, FrameLayout.LayoutParams(-1, -1))
+        previewFrame.addView(preview, FrameLayout.LayoutParams(-1, -2))
 
         val textOverlay = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -106,7 +106,7 @@ class MainActivity : Activity() {
             input.setOnFocusChangeListener { _, _ -> refreshPreview() }
         }
 
-        root.addView(previewFrame, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(previewFrame, lp())
         section(root, "2. 3-SECOND CTA IMAGE")
         root.addView(button("CHOOSE CTA IMAGE") { pickImage(101) }, lp())
         ctaImageLabel = label("No CTA image selected"); root.addView(ctaImageLabel, lp())
