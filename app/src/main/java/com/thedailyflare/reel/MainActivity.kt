@@ -15,6 +15,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.view.ViewGroup
+import android.view.Gravity
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -24,6 +25,7 @@ import android.widget.Spinner
 import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.ProgressBar
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
@@ -73,20 +75,38 @@ class MainActivity : Activity() {
         scroll.addView(root)
         root.addView(ImageView(this).apply { setImageResource(R.drawable.daily_flare_logo); adjustViewBounds = true; setPadding(0, 0, 0, 8) }, LinearLayout.LayoutParams(-1, 96))
         root.addView(TextView(this).apply { text = "Daily Flare Reel"; textSize = 30f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 0, 0, 12) }, lp())
-        preview = ReelPreviewView(this).apply { setBackgroundColor(0xFFEFEFEF.toInt()) }
-        root.addView(preview, lp())
         section(root, "1. MAIN 15-SECOND IMAGE")
         root.addView(button("CHOOSE MAIN IMAGE") { pickImage(100) }, lp())
         mainImageLabel = label("No main image selected"); root.addView(mainImageLabel, lp())
-        section(root, "MAIN HEADING")
-        titleInput = edit("Main heading", 2); root.addView(titleInput, lp())
+
+        // The editor lives directly on the preview. This keeps the existing text
+        // objects and export logic unchanged, but lets the user tap and type where
+        // the heading will visually appear instead of using controls below.
+        val previewFrame = FrameLayout(this)
+        preview = ReelPreviewView(this).apply { setBackgroundColor(0xFFEFEFEF.toInt()) }
+        previewFrame.addView(preview, FrameLayout.LayoutParams(-1, -1))
+
+        val textOverlay = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(28, 0, 28, 0)
+        }
+        previewFrame.addView(
+            textOverlay,
+            FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply { topMargin = 112 }
+        )
+
+        titleInput = editOnPreview("Main heading", true)
+        textOverlay.addView(titleInput, overlayLp())
         titleInput.setOnFocusChangeListener { _, _ -> refreshPreview() }
+
         for (i in 1..7) {
-            section(root, "SUBHEADING $i")
-            val input = edit("Subheading $i", 2)
-            headlineInputs.add(input); root.addView(input, lp())
+            val input = editOnPreview("Subheading $i", false)
+            headlineInputs.add(input)
+            textOverlay.addView(input, overlayLp())
             input.setOnFocusChangeListener { _, _ -> refreshPreview() }
         }
+
+        root.addView(previewFrame, LinearLayout.LayoutParams(-1, 0, 1f))
         section(root, "2. 3-SECOND CTA IMAGE")
         root.addView(button("CHOOSE CTA IMAGE") { pickImage(101) }, lp())
         ctaImageLabel = label("No CTA image selected"); root.addView(ctaImageLabel, lp())
@@ -170,6 +190,21 @@ class MainActivity : Activity() {
         })
     }
 
+    private fun editOnPreview(h: String, heading: Boolean) = EditText(this).apply {
+        hint = h
+        textSize = if (heading) 18f else 15f
+        setTextColor(0xFF000000.toInt())
+        setHintTextColor(0x99000000.toInt())
+        typeface = android.graphics.Typeface.create("sans", android.graphics.Typeface.BOLD)
+        setSingleLine(false)
+        maxLines = 2
+        setPadding(14, 6, 14, 6)
+        background = android.graphics.drawable.ColorDrawable(0xEFFFFFFF.toInt())
+    }
+    private fun overlayLp() = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        bottomMargin = 6
+    }
+
     private fun section(root: LinearLayout, value: String) { root.addView(TextView(this).apply { text = value; textSize = 18f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 16, 0, 6) }, lp()) }
     private fun edit(h: String, lines: Int) = EditText(this).apply { hint = h; textSize = 18f; minLines = lines; setSingleLine(false) }
     private fun button(t: String, action: () -> Unit) = Button(this).apply { text = t; textSize = 16f; setOnClickListener { action() } }
@@ -243,7 +278,13 @@ class MainActivity : Activity() {
         if (cropped !== source) cropped.recycle(); if (scaled !== source) source.recycle(); return scaled
     }
 
-    private fun refreshPreview() { preview.title = titleInput.text.toString(); preview.headlines = headlineInputs.map { it.text.toString() }; preview.invalidate() }
+    private fun refreshPreview() {
+        // Text is rendered by the editable controls directly on top of the preview.
+        // Export still reads the same titleInput/headlineInputs objects.
+        preview.title = ""
+        preview.headlines = emptyList()
+        preview.invalidate()
+    }
 
     private fun testVoice() {
         if (!::voiceTts.isInitialized) return toast("Voice service is still loading")
