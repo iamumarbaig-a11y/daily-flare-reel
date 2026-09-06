@@ -78,9 +78,11 @@ class MainActivity : Activity() {
         section(root, "1. MAIN 15-SECOND IMAGE")
         root.addView(button("CHOOSE MAIN IMAGE") { pickImage(100) }, lp())
         mainImageLabel = label("No main image selected"); root.addView(mainImageLabel, lp())
+        section(root, "MAIN HEADING")
         titleInput = edit("Main heading", 2); root.addView(titleInput, lp())
         titleInput.setOnFocusChangeListener { _, _ -> refreshPreview() }
         for (i in 1..7) {
+            section(root, "SUBHEADING $i")
             val input = edit("Subheading $i", 2)
             headlineInputs.add(input); root.addView(input, lp())
             input.setOnFocusChangeListener { _, _ -> refreshPreview() }
