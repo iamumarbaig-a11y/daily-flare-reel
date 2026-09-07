@@ -90,44 +90,31 @@ class MainActivity : Activity() {
         previewFrame = FrameLayout(this)
         preview = ReelPreviewView(this).apply {
             setBackgroundColor(0xFFEFEFEF.toInt())
-            setOnTouchListener { view, event ->
-                if (event.action == android.view.MotionEvent.ACTION_UP) openEditorForPreviewY(event.y, view.height)
-                true
-            }
         }
         previewFrame.addView(preview, FrameLayout.LayoutParams(-1, -2))
 
-        titleInput = EditText(this)
-        for (i in 1..7) headlineInputs.add(EditText(this))
-
-        activePreviewEditor = EditText(this).apply {
-            visibility = android.view.View.GONE
-            setTextColor(0xFF111111.toInt())
-            setHintTextColor(0x66000000.toInt())
-            typeface = android.graphics.Typeface.create("sans", android.graphics.Typeface.BOLD)
-            setSingleLine(false)
-            maxLines = 3
-            textSize = 20f
-            setPadding(dp(14), dp(7), dp(14), dp(7))
-            background = GradientDrawable().apply {
-                setColor(0xF7FFFFFF.toInt())
-                cornerRadius = dp(10).toFloat()
-            }
-            setOnFocusChangeListener { _, hasFocus ->
-                if (!hasFocus) closePreviewEditor()
-            }
+        titleInput = edit("Main heading", 2).apply {
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = refreshPreview()
+                override fun afterTextChanged(s: Editable?) = Unit
+            })
         }
-        activePreviewEditor.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                if (activeEditorIndex < 0) return
-                targetInput(activeEditorIndex)?.setText(s ?: "")
-                refreshPreview()
-            }
-            override fun afterTextChanged(s: Editable?) = Unit
-        })
-        previewFrame.addView(activePreviewEditor)
+        for (i in 1..7) {
+            headlineInputs.add(edit("Subheading $i", 2).apply {
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = refreshPreview()
+                    override fun afterTextChanged(s: Editable?) = Unit
+                })
+            })
+        }
+
         root.addView(previewFrame, lp())
+
+        // Keep the preview clean: all editable text boxes live below it.
+        root.addView(titleInput, lp())
+        headlineInputs.forEach { root.addView(it, lp()) }
 
         section(root, "2. 3-SECOND CTA IMAGE")
         root.addView(button("CHOOSE CTA IMAGE") { pickImage(101) }, lp())
@@ -212,47 +199,13 @@ class MainActivity : Activity() {
         })
     }
 
-    private fun openEditorForPreviewY(y: Float, previewHeight: Int) {
-        if (previewHeight <= 0) return
-        val normalized = y / previewHeight.toFloat()
-        val index = when {
-            normalized < 0.30f -> 0
-            else -> (((normalized - 0.30f) / 0.085f).toInt() + 1).coerceIn(1, 7)
-        }
-        openPreviewEditor(index, previewHeight)
+    private fun edit(hint: String, lines: Int): EditText = EditText(this).apply {
+        this.hint = hint
+        setSingleLine(lines == 1)
+        maxLines = lines
+        textSize = 17f
+        setPadding(dp(14), dp(10), dp(14), dp(10))
     }
-
-    private fun openPreviewEditor(index: Int, previewHeight: Int) {
-        activeEditorIndex = index
-        val source = targetInput(index) ?: return
-        activePreviewEditor.setText(source.text)
-        activePreviewEditor.hint = if (index == 0) "Main heading" else "Subheading $index"
-        activePreviewEditor.textSize = if (index == 0) 20f else 17f
-        val topRatio = if (index == 0) 0.15f else 0.29f + ((index - 1) * 0.075f)
-        val params = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT
-        ).apply {
-            leftMargin = dp(18)
-            rightMargin = dp(18)
-            topMargin = (previewHeight * topRatio).toInt()
-        }
-        activePreviewEditor.layoutParams = params
-        activePreviewEditor.visibility = android.view.View.VISIBLE
-        activePreviewEditor.requestFocus()
-        activePreviewEditor.setSelection(activePreviewEditor.text.length)
-        refreshPreview()
-    }
-
-    private fun closePreviewEditor() {
-        if (!::activePreviewEditor.isInitialized || activeEditorIndex < 0) return
-        activePreviewEditor.visibility = android.view.View.GONE
-        activeEditorIndex = -1
-        refreshPreview()
-    }
-
-    private fun targetInput(index: Int): EditText? =
-        if (index == 0) titleInput else headlineInputs.getOrNull(index - 1)
 
     private fun section(root: LinearLayout, value: String) {
         root.addView(TextView(this).apply {
