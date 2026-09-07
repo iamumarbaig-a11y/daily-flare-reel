@@ -67,7 +67,7 @@ class ReelEncoder(private val context: Context) {
             setInteger(MediaFormat.KEY_BIT_RATE, 6_000_000); setInteger(MediaFormat.KEY_FRAME_RATE, fps); setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
         }
         val codec = MediaCodec.createEncoderByType("video/avc"); val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        var surface: Surface? = null; var track = -1; var started = false; val info = MediaCodec.BufferInfo()
+        var surface: Surface? = null; var input: CodecInputSurface? = null; var track = -1; var started = false; val info = MediaCodec.BufferInfo()
         // Render at 60 FPS with deterministic frame submission pacing. Rendering speed
         // must not create additional visual frames or change the planned frame count.
         // Each exported frame remains exactly one position in the fixed 60 FPS timeline.
@@ -75,9 +75,10 @@ class ReelEncoder(private val context: Context) {
         val animatedLayer = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val settledMask = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         try {
-            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); surface = codec.createInputSurface(); codec.start()
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); surface = codec.createInputSurface(); input = CodecInputSurface(surface!!); codec.start()
             for (frame in 0 until totalFrames) {
-                val canvas = surface.lockCanvas(null)
+                val frameBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(frameBitmap)
                 try {
                     if (frame < mainFrames) {
                         val count = backgrounds.size.coerceAtLeast(1)
@@ -107,7 +108,10 @@ class ReelEncoder(private val context: Context) {
                             headlineWordCounts, segmentFrames, textEffect, textEffectIntensity, textRevealMode,
                             animatedLayer, settledMask)
                     } else ReelLayout.drawCover(canvas, ctaBitmap, width, height)
-                } finally { surface.unlockCanvasAndPost(canvas) }
+                } finally {
+                    input!!.render(frameBitmap, width, height, frame.toLong() * 1_000_000_000L / fps.toLong())
+                    frameBitmap.recycle()
+                }
                 while (true) {
                     val result = codec.dequeueOutputBuffer(info, 0)
                     when {
@@ -118,7 +122,7 @@ class ReelEncoder(private val context: Context) {
                 }
                 drain?.onFrame(frame + 1, totalFrames)
             }
-            codec.signalEndOfInputStream(); surface.release(); surface = null
+            codec.signalEndOfInputStream(); input?.release(); input = null; surface = null
             var eos = false
             while (!eos) {
                 val result = codec.dequeueOutputBuffer(info, 10_000)
@@ -128,7 +132,7 @@ class ReelEncoder(private val context: Context) {
                     result >= 0 -> { val encoded = codec.getOutputBuffer(result); if (encoded != null && info.size > 0 && started) { encoded.position(info.offset); encoded.limit(info.offset + info.size); muxer.writeSampleData(track, encoded, info) }; eos = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0; codec.releaseOutputBuffer(result, false) }
                 }
             }
-        } finally { try { surface?.release() } catch (_: Exception) {}; if (started) try { muxer.stop() } catch (_: Exception) {}; muxer.release(); try { codec.stop() } catch (_: Exception) {}; codec.release() }
+        } finally { try { input?.release() } catch (_: Exception) {}; try { surface?.release() } catch (_: Exception) {}; if (started) try { muxer.stop() } catch (_: Exception) {}; muxer.release(); try { codec.stop() } catch (_: Exception) {}; codec.release() }
         require(output.exists() && output.length() > 0L) { "18-second video produced no output" }
     }
 
