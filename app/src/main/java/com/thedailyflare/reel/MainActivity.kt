@@ -315,6 +315,7 @@ class MainActivity : Activity() {
         preview.effect = imageEffects.getOrElse(segment) { ReelEncoder.ImageEffect.ZOOM_IN }
         preview.effectIntensity = imageEffectIntensities.getOrElse(segment) { 0.18f }
         preview.visualProgress = (progress * images.size - segment).coerceIn(0f, 1f)
+        preview.textPreviewProgress = progress
         preview.showCta = progress >= 0.98f && ctaBitmap != null
         preview.invalidate()
     }
