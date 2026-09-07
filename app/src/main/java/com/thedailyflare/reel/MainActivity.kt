@@ -17,6 +17,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.view.ViewGroup
 import android.view.Gravity
@@ -52,6 +54,14 @@ class MainActivity : Activity() {
     private lateinit var exportStatus: TextView
     private lateinit var exportProgress: ProgressBar
     private var voicePlayer: MediaPlayer? = null
+    private var previewVoicePlayer: MediaPlayer? = null
+    private val voicePreviewHandler = Handler(Looper.getMainLooper())
+    private var voicePreviewGenerationVersion = 0
+    private var cachedVoiceDurationMs = 0L
+    private var cachedVoiceKey: String? = null
+    private var cachedVoiceReady = false
+    private val cachedVoiceFile by lazy { File(cacheDir, "daily_flare_preview_voice.wav") }
+    private val voicePreviewDebounce = Runnable { generateBackgroundVoicePreview() }
     private var voiceOptions = emptyList<VoiceTts.VoiceOption>()
     private var selectedVoice: VoiceTts.VoiceOption? = null
     private lateinit var titleInput: EditText
@@ -154,7 +164,7 @@ class MainActivity : Activity() {
         speedSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceSpeeds.map { "${it}×" })
         val savedSpeed = preferences.getFloat("voice_speed", 1.0f)
         speedSpinner.setSelection(voiceSpeeds.indexOf(savedSpeed).takeIf { it >= 0 } ?: 2, false)
-        speedSpinner.onItemSelectedListener = simpleSelectionListener { position -> preferences.edit().putFloat("voice_speed", voiceSpeeds.getOrElse(position) { 1.0f }).apply() }
+        speedSpinner.onItemSelectedListener = simpleSelectionListener { position -> preferences.edit().putFloat("voice_speed", voiceSpeeds.getOrElse(position) { 1.0f }).apply(); scheduleBackgroundVoicePreview() }
         root.addView(twoColumnRow("VOICE" to voiceSpinner, "SPEED" to speedSpinner), lp())
         voiceTts = VoiceTts(this)
         voiceSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
@@ -162,6 +172,7 @@ class MainActivity : Activity() {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
                 selectedVoice = voiceOptions.getOrNull(position)
                 selectedVoice?.name?.let { preferences.edit().putString("voice_name", it).apply() }
+                scheduleBackgroundVoicePreview()
             }
         }
         refreshKokoroState()
@@ -212,8 +223,92 @@ class MainActivity : Activity() {
 
     private fun refreshWatcher() = object : TextWatcher {
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = refreshPreview()
+        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { refreshPreview(); scheduleBackgroundVoicePreview() }
         override fun afterTextChanged(s: Editable?) = Unit
+    }
+
+
+    private fun currentSpeechText(): String {
+        val parts = mutableListOf<String>()
+        val heading = titleInput.text.toString().trim()
+        if (heading.isNotBlank()) parts.add(heading)
+        headlineInputs.map { it.text.toString().trim() }.filter { it.isNotBlank() }.forEach { parts.add(it) }
+        return parts.joinToString(". ")
+    }
+
+    private fun currentVoicePreviewKey(text: String, voice: VoiceTts.VoiceOption, speed: Float): String =
+        "${voice.name}|$speed|$text"
+
+    private fun scheduleBackgroundVoicePreview() {
+        if (!::voiceTts.isInitialized || !::titleInput.isInitialized) return
+        voicePreviewGenerationVersion++
+        voicePreviewHandler.removeCallbacks(voicePreviewDebounce)
+        if (currentSpeechText().isBlank()) {
+            cachedVoiceReady = false
+            cachedVoiceDurationMs = 0L
+            cachedVoiceKey = null
+            return
+        }
+        voicePreviewHandler.postDelayed(voicePreviewDebounce, 700L)
+    }
+
+    private fun generateBackgroundVoicePreview() {
+        val voice = selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition) ?: return
+        val text = currentSpeechText()
+        if (text.isBlank()) return
+        val speed = voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition) { 1.0f }
+        val key = currentVoicePreviewKey(text, voice, speed)
+        if (cachedVoiceReady && cachedVoiceKey == key && cachedVoiceFile.exists()) return
+        val version = voicePreviewGenerationVersion
+        voiceStatus.text = "Preparing voice preview in background..."
+        thread(name = "daily-flare-background-kokoro") {
+            val temp = File(cacheDir, "daily_flare_preview_voice_$version.wav")
+            temp.delete()
+            voiceTts.speakToFile(text, voice, temp, speed) { ok, _ ->
+                val duration = if (ok && temp.exists() && temp.length() > 0L) getAudioDurationMs(temp) else 0L
+                runOnUiThread {
+                    if (version != voicePreviewGenerationVersion || currentVoicePreviewKey(currentSpeechText(), voice, speed) != key) {
+                        temp.delete()
+                        return@runOnUiThread
+                    }
+                    if (!ok || duration <= 0L) {
+                        temp.delete()
+                        cachedVoiceReady = false
+                        voiceStatus.text = "Voice preview generation failed — edit text or try again"
+                        return@runOnUiThread
+                    }
+                    cachedVoiceFile.delete()
+                    temp.copyTo(cachedVoiceFile, overwrite = true)
+                    temp.delete()
+                    cachedVoiceDurationMs = duration
+                    cachedVoiceKey = key
+                    cachedVoiceReady = true
+                    voiceStatus.text = "Voice preview ready · ${formatDuration(duration)}"
+                    updateVisualPreview(visualPreviewSlider.progress / 100f)
+                }
+            }
+        }
+    }
+
+    private fun startCachedVoiceAt(progress: Int) {
+        stopCachedPreviewVoice()
+        if (!cachedVoiceReady || !cachedVoiceFile.exists() || cachedVoiceDurationMs <= 0L) return
+        val total = visualPreviewDurationMs().coerceAtLeast(1L)
+        val reelPosition = total * progress.coerceIn(0, 100) / 100L
+        if (reelPosition >= cachedVoiceDurationMs) return
+        try {
+            previewVoicePlayer = MediaPlayer().apply {
+                setDataSource(cachedVoiceFile.absolutePath)
+                prepare()
+                seekTo(reelPosition.coerceAtMost(cachedVoiceDurationMs - 1L).toInt())
+                start()
+            }
+        } catch (_: Exception) { stopCachedPreviewVoice() }
+    }
+
+    private fun stopCachedPreviewVoice() {
+        previewVoicePlayer?.release()
+        previewVoicePlayer = null
     }
 
     private fun refreshKokoroState() {
@@ -225,6 +320,7 @@ class MainActivity : Activity() {
             val restoredIndex = options.indexOfFirst { it.name == (persistedVoiceName ?: previousName) }.takeIf { it >= 0 } ?: 0
             if (options.isNotEmpty()) { voiceSpinner.setSelection(restoredIndex, false); selectedVoice = options[restoredIndex] } else selectedVoice = null
             voiceStatus.text = "Kokoro is ready locally — ${options.size} voices available"
+            scheduleBackgroundVoicePreview()
         } }, { error -> runOnUiThread {
             voiceOptions = emptyList(); selectedVoice = null
             voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, emptyList<String>())
@@ -337,6 +433,7 @@ class MainActivity : Activity() {
         if (visualPreviewSlider.progress >= 100) visualPreviewSlider.progress = 0
         visualPreviewStartProgress = visualPreviewSlider.progress
         visualPreviewStartedAtMs = SystemClock.elapsedRealtime()
+        startCachedVoiceAt(visualPreviewStartProgress)
         visualPreviewPlaying = true
         visualPreviewPlayButton.text = "⏸"
         preview.removeCallbacks(visualPreviewTick)
@@ -346,6 +443,7 @@ class MainActivity : Activity() {
     private fun stopVisualPreview(resetIcon: Boolean) {
         visualPreviewPlaying = false
         if (::preview.isInitialized) preview.removeCallbacks(visualPreviewTick)
+        stopCachedPreviewVoice()
         if (resetIcon && ::visualPreviewPlayButton.isInitialized) visualPreviewPlayButton.text = "▶"
     }
 
@@ -353,7 +451,8 @@ class MainActivity : Activity() {
     // the amount of text so longer reels do not race through the preview.
     private fun visualPreviewDurationMs(): Long {
         val bodyWords = ReelLayout.bodyWordCount(headlineInputs.map { it.text.toString() })
-        return (3500L + bodyWords * 140L).coerceIn(3500L, 18000L)
+        val narration = if (cachedVoiceReady && cachedVoiceDurationMs > 0L) cachedVoiceDurationMs else (3500L + bodyWords * 140L).coerceIn(3500L, 18000L)
+        return narration + 3000L
     }
 
     private fun updateVisualPreview(progress: Float) {
@@ -417,6 +516,6 @@ class MainActivity : Activity() {
             .show()
     }
 
-    override fun onDestroy(){stopVisualPreview(resetIcon = false);voicePlayer?.release();voicePlayer=null;if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
+    override fun onDestroy(){stopVisualPreview(resetIcon = false);voicePlayer?.release();voicePlayer=null;stopCachedPreviewVoice();voicePreviewHandler.removeCallbacks(voicePreviewDebounce);if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
     private fun toast(message:String)=Toast.makeText(this,message,Toast.LENGTH_LONG).show()
 }
