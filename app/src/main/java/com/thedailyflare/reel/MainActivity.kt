@@ -221,6 +221,9 @@ class MainActivity : Activity() {
             textRevealMode = revealModes[reveal.selectedItemPosition]
             preferences.edit().putString("text_effect", selectedTextEffect).putInt("text_effect_intensity", textEffectIntensity).putString("text_reveal_mode", textRevealMode).apply()
             textEffectButton.text = "TEXT: $selectedTextEffect · ${textEffectIntensity}%"
+            preview.textEffect = selectedTextEffect
+            preview.textEffectIntensity = textEffectIntensity
+            preview.textRevealMode = textRevealMode
             preview.invalidate()
         }.setNegativeButton("CANCEL", null).show()
     }
@@ -450,7 +453,7 @@ class MainActivity : Activity() {
         preview.invalidate()
     }
 
-    private fun refreshPreview() { preview.title=titleInput.text.toString().trim().ifBlank { "Main heading" }; preview.headlines=headlineInputs.map{it.text.toString().trim()}; preview.invalidate() }
+    private fun refreshPreview() { preview.title=titleInput.text.toString().trim().ifBlank { "Main heading" }; preview.headlines=headlineInputs.map{it.text.toString().trim()}; preview.textEffect=selectedTextEffect; preview.textEffectIntensity=textEffectIntensity; preview.textRevealMode=textRevealMode; preview.invalidate() }
     private fun testVoice() { if (!::voiceTts.isInitialized) return toast("Voice service is still loading"); val selected=selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition) ?: return toast("Select a Kokoro voice first"); val parts=mutableListOf<String>(); val heading=titleInput.text.toString().trim(); if(heading.isNotBlank())parts.add(heading); headlineInputs.map{it.text.toString().trim()}.filter{it.isNotBlank()}.forEach{parts.add(it)}; val speechText=parts.joinToString(". "); if(speechText.isBlank())return toast("Enter a heading or subheading first"); toast("Generating and playing voice..."); val output=File(cacheDir,"daily_flare_voice.wav"); val selectedSpeed=voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition){1.0f}; voiceTts.speakToFile(speechText,selected,output,selectedSpeed){ok,duration->runOnUiThread{if(!ok)toast("Voice generation failed")else{playVoiceFile(output);toast("Playing Kokoro voice at ${selectedSpeed}×: ${duration} ms")}}} }
     private fun getAudioDurationMs(file: File): Long { val retriever=MediaMetadataRetriever(); return try{retriever.setDataSource(file.absolutePath);retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?:0L}catch(_:Exception){0L}finally{try{retriever.release()}catch(_:Exception){}} }
     private fun playVoiceFile(file: File){try{voicePlayer?.release();voicePlayer=MediaPlayer().apply{setDataSource(file.absolutePath);setOnCompletionListener{it.release();voicePlayer=null};prepare();start()}}catch(_:Exception){toast("Voice was generated but could not be played")}}
