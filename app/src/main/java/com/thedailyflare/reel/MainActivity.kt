@@ -112,7 +112,7 @@ class MainActivity : Activity() {
         root.addView(ImageView(this).apply { setImageResource(R.drawable.daily_flare_logo); adjustViewBounds = true; setPadding(0, 0, 0, 8) }, LinearLayout.LayoutParams(-1, 96))
         root.addView(TextView(this).apply { text = "Daily Flare Reel"; textSize = 30f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 0, 0, 12) }, lp())
         previewFrame = FrameLayout(this)
-        preview = ReelPreviewView(this).apply { setBackgroundColor(0xFFEFEFEF.toInt()) }
+        preview = ReelPreviewView(this).apply {\n            setBackgroundColor(0xFFEFEFEF.toInt())\n            textEffect = selectedTextEffect\n            textEffectIntensity = this@MainActivity.textEffectIntensity\n            textRevealMode = this@MainActivity.textRevealMode\n        }
         previewFrame.addView(preview, FrameLayout.LayoutParams(-1, -2))
 
         titleInput = edit("Main heading", 2).apply { addTextChangedListener(refreshWatcher()) }
