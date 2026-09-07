@@ -14,6 +14,7 @@ class ReelPreviewView(context: Context) : View(context) {
     var visualProgress: Float = 0f
     var effect: ReelEncoder.ImageEffect = ReelEncoder.ImageEffect.ZOOM_IN
     var effectIntensity: Float = 0.18f
+    var textPreviewProgress: Float = 0f
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
@@ -41,6 +42,8 @@ class ReelPreviewView(context: Context) : View(context) {
             ReelLayout.drawCover(canvas, it, width, height)
             canvas.restore()
         }
-        ReelLayout.draw(canvas, title, headlines, width, height, ctaBitmap, showCta)
+        val totalWords = ReelLayout.bodyWordCount(headlines)
+        val visibleWords = (totalWords * textPreviewProgress.coerceIn(0f, 1f)).toInt()
+        ReelLayout.draw(canvas, title, headlines, width, height, ctaBitmap, showCta, visibleWords)
     }
 }
