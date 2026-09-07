@@ -58,6 +58,10 @@ class MainActivity : Activity() {
     private lateinit var previewFrame: FrameLayout
     private lateinit var visualPreviewSlider: SeekBar
     private lateinit var visualPreviewLabel: TextView
+    private lateinit var textEffectButton: Button
+    private var selectedTextEffect = "FADE + POP"
+    private var textEffectIntensity = 25
+    private var textRevealMode = "WORD BY WORD"
     private var mainBitmap: Bitmap? = null
     private val reelBitmaps = mutableListOf<Bitmap>()
     private val imageEffects = mutableListOf<ReelEncoder.ImageEffect>()
@@ -74,6 +78,9 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         preferences = getSharedPreferences("daily_flare_reel_preferences", MODE_PRIVATE)
+        selectedTextEffect = preferences.getString("text_effect", "FADE + POP") ?: "FADE + POP"
+        textEffectIntensity = preferences.getInt("text_effect_intensity", 25)
+        textRevealMode = preferences.getString("text_reveal_mode", "WORD BY WORD") ?: "WORD BY WORD"
         buildUi()
         restorePersistentSelections()
     }
@@ -106,6 +113,8 @@ class MainActivity : Activity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
         })
         root.addView(visualPreviewSlider, lp())
+        textEffectButton = button("TEXT: FADE + POP · 25%") { showTextEffectSettings() }
+        root.addView(textEffectButton, lp())
         root.addView(twoColumnRow(
             "" to button("IMAGE") { pickImages() },
             "" to button("OUTRO") { pickImage(101) }
@@ -147,6 +156,35 @@ class MainActivity : Activity() {
         root.addView(exportProgress, lp())
         root.addView(button("EXPORT REEL") { exportReel() }, lp())
         setContentView(scroll)
+    }
+
+    private fun showTextEffectSettings() {
+        val effects = arrayOf("NONE", "POP", "FADE + POP", "SLIDE UP", "BOUNCE", "BLUR IN", "SLIDE + FADE")
+        val revealModes = arrayOf("WORD BY WORD", "CHARACTER BY CHARACTER", "INSTANT")
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(12)) }
+        root.addView(label("TEXT REVEAL"))
+        val reveal = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, revealModes); setSelection(revealModes.indexOf(textRevealMode).coerceAtLeast(0)) }
+        root.addView(reveal)
+        root.addView(label("TEXT EFFECT"))
+        val spinner = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, effects); setSelection(effects.indexOf(selectedTextEffect).coerceAtLeast(0)) }
+        root.addView(spinner)
+        val intensityLabel = label("INTENSITY: ${textEffectIntensity}%")
+        root.addView(intensityLabel)
+        val intensity = SeekBar(this).apply { max = 100; progress = textEffectIntensity }
+        intensity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) { intensityLabel.text = "INTENSITY: $progress%" }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+        })
+        root.addView(intensity)
+        android.app.AlertDialog.Builder(this).setTitle("TEXT ANIMATION").setView(root).setPositiveButton("APPLY") { _, _ ->
+            selectedTextEffect = effects[spinner.selectedItemPosition]
+            textEffectIntensity = intensity.progress
+            textRevealMode = revealModes[reveal.selectedItemPosition]
+            preferences.edit().putString("text_effect", selectedTextEffect).putInt("text_effect_intensity", textEffectIntensity).putString("text_reveal_mode", textRevealMode).apply()
+            textEffectButton.text = "TEXT: $selectedTextEffect · ${textEffectIntensity}%"
+            preview.invalidate()
+        }.setNegativeButton("CANCEL", null).show()
     }
 
     private fun refreshWatcher() = object : TextWatcher {
