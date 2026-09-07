@@ -425,7 +425,6 @@ class MainActivity : Activity() {
     private fun stopVisualPreview(resetIcon: Boolean) {
         visualPreviewPlaying = false
         if (::preview.isInitialized) preview.removeCallbacks(visualPreviewTick)
-        stopCachedPreviewVoice()
         if (resetIcon && ::visualPreviewPlayButton.isInitialized) visualPreviewPlayButton.text = "▶"
     }
 
