@@ -16,6 +16,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.ViewGroup
 import android.view.Gravity
@@ -58,6 +59,20 @@ class MainActivity : Activity() {
     private lateinit var previewFrame: FrameLayout
     private lateinit var visualPreviewSlider: SeekBar
     private lateinit var visualPreviewLabel: TextView
+    private lateinit var visualPreviewPlayButton: Button
+    private var visualPreviewPlaying = false
+    private var visualPreviewStartedAtMs = 0L
+    private var visualPreviewStartProgress = 0
+    private val visualPreviewTick = object : Runnable {
+        override fun run() {
+            if (!visualPreviewPlaying) return
+            val elapsed = SystemClock.elapsedRealtime() - visualPreviewStartedAtMs
+            val duration = visualPreviewDurationMs()
+            val next = (visualPreviewStartProgress + (elapsed.toFloat() / duration.toFloat() * 100f).toInt()).coerceIn(0, 100)
+            visualPreviewSlider.progress = next
+            if (next >= 100) stopVisualPreview(resetIcon = true) else preview.postDelayed(this, 16L)
+        }
+    }
     private lateinit var textEffectButton: Button
     private var selectedTextEffect = "FADE + POP"
     private var textEffectIntensity = 25
@@ -106,13 +121,21 @@ class MainActivity : Activity() {
         root.addView(previewFrame, lp())
         visualPreviewLabel = label("VISUAL PREVIEW 0%")
         root.addView(visualPreviewLabel, lp())
+        val previewControls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         visualPreviewSlider = SeekBar(this).apply { max = 100; progress = 0 }
         visualPreviewSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) { updateVisualPreview(progress / 100f) }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+            override fun onStartTrackingTouch(seekBar: SeekBar?) { stopVisualPreview(resetIcon = true) }
             override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
         })
-        root.addView(visualPreviewSlider, lp())
+        previewControls.addView(visualPreviewSlider, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        visualPreviewPlayButton = button("▶") { toggleVisualPreview() }.apply {
+            contentDescription = "Play silent visual preview"
+            minHeight = dp(48)
+            minWidth = dp(58)
+        }
+        previewControls.addView(visualPreviewPlayButton, LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(12) })
+        root.addView(previewControls, lp())
         textEffectButton = button("TEXT: FADE + POP · 25%") { showTextEffectSettings() }
         root.addView(textEffectButton, lp())
         root.addView(twoColumnRow(
@@ -306,6 +329,35 @@ class MainActivity : Activity() {
         } catch (_: Exception) { null }
     }
     private fun centerCropPortrait(source: Bitmap): Bitmap { val targetW=1080; val targetH=1920; val targetRatio=targetW.toFloat()/targetH; val sourceRatio=source.width.toFloat()/source.height; val cropW:Int; val cropH:Int; if(sourceRatio>targetRatio){cropH=source.height;cropW=(cropH*targetRatio).toInt()}else{cropW=source.width;cropH=(cropW/targetRatio).toInt()}; val left=(source.width-cropW)/2; val top=(source.height-cropH)/2; val cropped=Bitmap.createBitmap(source,left,top,cropW,cropH); val scaled=Bitmap.createScaledBitmap(cropped,targetW,targetH,true); if(cropped!==source)cropped.recycle();if(scaled!==source)source.recycle();return scaled }
+    private fun toggleVisualPreview() {
+        if (visualPreviewPlaying) {
+            stopVisualPreview(resetIcon = true)
+            return
+        }
+        if (visualPreviewSlider.progress >= 100) visualPreviewSlider.progress = 0
+        visualPreviewStartProgress = visualPreviewSlider.progress
+        visualPreviewStartedAtMs = SystemClock.elapsedRealtime()
+        visualPreviewPlaying = true
+        visualPreviewPlayButton.text = "⏸"
+        preview.removeCallbacks(visualPreviewTick)
+        preview.post(visualPreviewTick)
+    }
+
+    private fun stopVisualPreview(resetIcon: Boolean) {
+        visualPreviewPlaying = false
+        if (::preview.isInitialized) preview.removeCallbacks(visualPreviewTick)
+        if (resetIcon && ::visualPreviewPlayButton.isInitialized) visualPreviewPlayButton.text = "▶"
+    }
+
+    // Silent visual playback stays independent from Kokoro. The duration scales with
+    // the amount of text so longer reels do not race through the preview.
+    private fun visualPreviewDurationMs(): Long {
+        val bodyWords = if (::headlineInputs.isInitialized) {
+            ReelLayout.bodyWordCount(headlineInputs.map { it.text.toString() })
+        } else 0
+        return (3500L + bodyWords * 140L).coerceIn(3500L, 18000L)
+    }
+
     private fun updateVisualPreview(progress: Float) {
         visualPreviewLabel.text = "VISUAL PREVIEW ${(progress * 100).toInt()}%"
         val images = reelBitmaps
@@ -367,6 +419,6 @@ class MainActivity : Activity() {
             .show()
     }
 
-    override fun onDestroy(){voicePlayer?.release();voicePlayer=null;if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
+    override fun onDestroy(){stopVisualPreview(resetIcon = false);voicePlayer?.release();voicePlayer=null;if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
     private fun toast(message:String)=Toast.makeText(this,message,Toast.LENGTH_LONG).show()
 }
