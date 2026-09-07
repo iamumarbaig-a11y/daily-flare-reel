@@ -78,7 +78,7 @@ class ReelPreviewView(context: Context) : View(context) {
         }
 
         val amount = (textEffectIntensity.coerceIn(0, 100) / 100f)
-        val rawPhase = abs(revealPosition * totalWords - kotlin.math.floor(revealPosition * totalWords))
+        val revealWordPosition = revealPosition * totalWords\n        val rawPhase = abs(revealWordPosition - kotlin.math.floor(revealWordPosition.toDouble()).toFloat())
         val phase = if (visibleWords == 0 || totalWords == 0) 0f else {
             // 0 at the start of each new reveal, 1 when it settles.
             rawPhase.coerceIn(0f, 1f)
