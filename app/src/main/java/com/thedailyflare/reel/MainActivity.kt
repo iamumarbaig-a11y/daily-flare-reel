@@ -56,6 +56,8 @@ class MainActivity : Activity() {
     private lateinit var titleInput: EditText
     private val headlineInputs = mutableListOf<EditText>()
     private lateinit var previewFrame: FrameLayout
+    private lateinit var visualPreviewSlider: SeekBar
+    private lateinit var visualPreviewLabel: TextView
     private var mainBitmap: Bitmap? = null
     private val reelBitmaps = mutableListOf<Bitmap>()
     private val imageEffects = mutableListOf<ReelEncoder.ImageEffect>()
@@ -95,6 +97,15 @@ class MainActivity : Activity() {
         for (i in 1..7) headlineInputs.add(edit("Subheading $i", 2).apply { addTextChangedListener(refreshWatcher()) })
 
         root.addView(previewFrame, lp())
+        visualPreviewLabel = label("VISUAL PREVIEW 0%")
+        root.addView(visualPreviewLabel, lp())
+        visualPreviewSlider = SeekBar(this).apply { max = 100; progress = 0 }
+        visualPreviewSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) { updateVisualPreview(progress / 100f) }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+        })
+        root.addView(visualPreviewSlider, lp())
         root.addView(twoColumnRow(
             "" to button("IMAGE") { pickImages() },
             "" to button("OUTRO") { pickImage(101) }
@@ -257,6 +268,19 @@ class MainActivity : Activity() {
         } catch (_: Exception) { null }
     }
     private fun centerCropPortrait(source: Bitmap): Bitmap { val targetW=1080; val targetH=1920; val targetRatio=targetW.toFloat()/targetH; val sourceRatio=source.width.toFloat()/source.height; val cropW:Int; val cropH:Int; if(sourceRatio>targetRatio){cropH=source.height;cropW=(cropH*targetRatio).toInt()}else{cropW=source.width;cropH=(cropW/targetRatio).toInt()}; val left=(source.width-cropW)/2; val top=(source.height-cropH)/2; val cropped=Bitmap.createBitmap(source,left,top,cropW,cropH); val scaled=Bitmap.createScaledBitmap(cropped,targetW,targetH,true); if(cropped!==source)cropped.recycle();if(scaled!==source)source.recycle();return scaled }
+    private fun updateVisualPreview(progress: Float) {
+        visualPreviewLabel.text = "VISUAL PREVIEW ${(progress * 100).toInt()}%"
+        val images = reelBitmaps
+        if (images.isEmpty()) { preview.visualProgress = progress; preview.invalidate(); return }
+        val segment = (progress * images.size).toInt().coerceIn(0, images.size - 1)
+        preview.backgroundBitmap = images[segment]
+        preview.effect = imageEffects.getOrElse(segment) { ReelEncoder.ImageEffect.ZOOM_IN }
+        preview.effectIntensity = imageEffectIntensities.getOrElse(segment) { 0.18f }
+        preview.visualProgress = (progress * images.size - segment).coerceIn(0f, 1f)
+        preview.showCta = progress >= 0.98f && ctaBitmap != null
+        preview.invalidate()
+    }
+
     private fun refreshPreview() { preview.title=titleInput.text.toString().trim().ifBlank { "Main heading" }; preview.headlines=headlineInputs.map{it.text.toString().trim()}; preview.invalidate() }
     private fun testVoice() { if (!::voiceTts.isInitialized) return toast("Voice service is still loading"); val selected=selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition) ?: return toast("Select a Kokoro voice first"); val parts=mutableListOf<String>(); val heading=titleInput.text.toString().trim(); if(heading.isNotBlank())parts.add(heading); headlineInputs.map{it.text.toString().trim()}.filter{it.isNotBlank()}.forEach{parts.add(it)}; val speechText=parts.joinToString(". "); if(speechText.isBlank())return toast("Enter a heading or subheading first"); toast("Generating and playing voice..."); val output=File(cacheDir,"daily_flare_voice.wav"); val selectedSpeed=voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition){1.0f}; voiceTts.speakToFile(speechText,selected,output,selectedSpeed){ok,duration->runOnUiThread{if(!ok)toast("Voice generation failed")else{playVoiceFile(output);toast("Playing Kokoro voice at ${selectedSpeed}×: ${duration} ms")}}} }
     private fun getAudioDurationMs(file: File): Long { val retriever=MediaMetadataRetriever(); return try{retriever.setDataSource(file.absolutePath);retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?:0L}catch(_:Exception){0L}finally{try{retriever.release()}catch(_:Exception){}} }
