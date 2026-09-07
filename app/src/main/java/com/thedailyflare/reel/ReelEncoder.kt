@@ -38,7 +38,7 @@ class ReelEncoder(private val context: Context) {
         drain: Drain? = null
     ) {
         output.delete()
-        val width = 1080; val height = 1920; val fps = 60
+        val width = 1080; val height = 1920; val fps = 24
         // Keep the visual narration section aligned to the exact audio timeline.
         // The previous whole-second rounding could delay the outro image by almost one second.
         val mainFrames = kotlin.math.ceil(voiceDurationMs.coerceAtLeast(1L).toDouble() * fps.toDouble() / 1000.0).toInt().coerceAtLeast(1)
