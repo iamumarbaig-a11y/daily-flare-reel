@@ -497,6 +497,6 @@ class MainActivity : Activity() {
             .show()
     }
 
-    override fun onDestroy(){stopVisualPreview(resetIcon = false);voicePlayer?.release();voicePlayer=null;stopCachedPreviewVoice();voicePreviewHandler.removeCallbacks(voicePreviewDebounce);if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
+    override fun onDestroy(){stopVisualPreview(resetIcon = false);voicePlayer?.release();voicePlayer=null;voicePreviewHandler.removeCallbacks(voicePreviewDebounce);if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
     private fun toast(message:String)=Toast.makeText(this,message,Toast.LENGTH_LONG).show()
 }
