@@ -23,6 +23,16 @@ class CodecInputSurface(private val surface: Surface) {
         eglSurface = EGL14.eglCreateWindowSurface(display,configs[0],surface,intArrayOf(EGL14.EGL_NONE),0)
         check(eglSurface != EGL14.EGL_NO_SURFACE) { "Unable to create EGL window surface" }
     }
+    fun createCanvasBitmap(width: Int, height: Int): android.graphics.Bitmap =
+        android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+
+    fun postBitmap(bitmap: android.graphics.Bitmap, presentationTimeNs: Long) {
+        // CPU Canvas rendering is preserved while the EGL surface owns deterministic timestamps.
+        val c = surface.lockCanvas(null)
+        try { c.drawBitmap(bitmap, 0f, 0f, null) } finally { surface.unlockCanvasAndPost(c) }
+        setPresentationTime(presentationTimeNs)
+    }
+
     fun makeCurrent() { check(EGL14.eglMakeCurrent(display,eglSurface,eglSurface,context)) { "Unable to make EGL current" } }
     fun setPresentationTime(nsecs: Long) { EGLExt.eglPresentationTimeANDROID(display,eglSurface,nsecs) }
     fun swapBuffers() { check(EGL14.eglSwapBuffers(display,eglSurface)) { "eglSwapBuffers failed" } }
