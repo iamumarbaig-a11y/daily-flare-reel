@@ -188,11 +188,12 @@ class MainActivity : Activity() {
                 scheduleBackgroundVoicePreview()
             }
         }
-        refreshKokoroState()
+        // Create setup controls before checking Kokoro: initialize() may invoke its callback immediately.
         testButton = button("TEST") { testVoice() }
         openPkgButton = button("OPEN PKG") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }
         kokoroSetupRow = twoColumnRow("" to testButton, "" to openPkgButton)
         root.addView(kokoroSetupRow, lp())
+        refreshKokoroState()
         section(root, "4. MUSIC")
         musicIntensitySpinner = Spinner(this)
         musicIntensitySpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, musicIntensities.map { "$it%" })
