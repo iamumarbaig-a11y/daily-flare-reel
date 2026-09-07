@@ -54,7 +54,6 @@ class MainActivity : Activity() {
     private lateinit var exportStatus: TextView
     private lateinit var exportProgress: ProgressBar
     private var voicePlayer: MediaPlayer? = null
-    private var previewVoicePlayer: MediaPlayer? = null
     private val voicePreviewHandler = Handler(Looper.getMainLooper())
     private var voicePreviewGenerationVersion = 0
     private var cachedVoiceDurationMs = 0L
@@ -295,27 +294,6 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun startCachedVoiceAt(progress: Int) {
-        stopCachedPreviewVoice()
-        if (!cachedVoiceReady || !cachedVoiceFile.exists() || cachedVoiceDurationMs <= 0L) return
-        val total = visualPreviewDurationMs().coerceAtLeast(1L)
-        val reelPosition = total * progress.coerceIn(0, 100) / 100L
-        if (reelPosition >= cachedVoiceDurationMs) return
-        try {
-            previewVoicePlayer = MediaPlayer().apply {
-                setDataSource(cachedVoiceFile.absolutePath)
-                prepare()
-                seekTo(reelPosition.coerceAtMost(cachedVoiceDurationMs - 1L).toInt())
-                start()
-            }
-        } catch (_: Exception) { stopCachedPreviewVoice() }
-    }
-
-    private fun stopCachedPreviewVoice() {
-        previewVoicePlayer?.release()
-        previewVoicePlayer = null
-    }
-
     private fun refreshKokoroState() {
         val previousName = selectedVoice?.name
         voiceTts.initialize({ options -> runOnUiThread {
@@ -438,7 +416,6 @@ class MainActivity : Activity() {
         if (visualPreviewSlider.progress >= 100) visualPreviewSlider.progress = 0
         visualPreviewStartProgress = visualPreviewSlider.progress
         visualPreviewStartedAtMs = SystemClock.elapsedRealtime()
-        startCachedVoiceAt(visualPreviewStartProgress)
         visualPreviewPlaying = true
         visualPreviewPlayButton.text = "⏸"
         preview.removeCallbacks(visualPreviewTick)
