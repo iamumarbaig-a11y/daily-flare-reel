@@ -116,16 +116,13 @@ class MainActivity : Activity() {
         root.addView(titleInput, lp())
         headlineInputs.forEach { root.addView(it, lp()) }
 
-        section(root, "2. 3-SECOND CTA IMAGE")
-        root.addView(button("CHOOSE CTA IMAGE") { pickImage(101) }, lp())
+        section(root, "2. CTA IMAGE")
+        root.addView(button("CHOOSE CTA") { pickImage(101) }, lp())
         ctaImageLabel = label("No CTA image selected"); root.addView(ctaImageLabel, lp())
         section(root, "3. KOKORO AI VOICE")
         voiceStatus = label("Checking local Kokoro package...")
         root.addView(voiceStatus, lp())
-        root.addView(TextView(this).apply { text = "VOICE"; textSize = 14f }, lp())
         voiceSpinner = Spinner(this)
-        root.addView(voiceSpinner, lp())
-        root.addView(TextView(this).apply { text = "VOICE SPEED"; textSize = 14f }, lp())
         speedSpinner = Spinner(this)
         speedSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceSpeeds.map { it.toString() + "×" })
         val savedSpeed = preferences.getFloat("voice_speed", 1.0f)
@@ -133,7 +130,10 @@ class MainActivity : Activity() {
         speedSpinner.onItemSelectedListener = simpleSelectionListener { position ->
             preferences.edit().putFloat("voice_speed", voiceSpeeds.getOrElse(position) { 1.0f }).apply()
         }
-        root.addView(speedSpinner, lp())
+        root.addView(twoColumnRow(
+            "VOICE" to voiceSpinner,
+            "SPEED" to speedSpinner
+        ), lp())
         voiceTts = VoiceTts(this)
         voiceSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
@@ -145,12 +145,9 @@ class MainActivity : Activity() {
             }
         }
         refreshKokoroState()
-        root.addView(button("TEST SELECTED KOKORO VOICE") { testVoice() }, lp())
-        root.addView(button("OPEN KOKORO MODEL PACKAGE") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }, lp())
-        section(root, "4. MUSIC — ALL 18 SECONDS")
-        root.addView(button("CHOOSE MUSIC") { pickAudio() }, lp())
-        musicLabel = label("No music selected"); root.addView(musicLabel, lp())
-        root.addView(TextView(this).apply { text = "MUSIC INTENSITY"; textSize = 14f }, lp())
+        root.addView(button("TEST") { testVoice() }, lp())
+        root.addView(button("OPEN PKG") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }, lp())
+        section(root, "4. MUSIC")
         musicIntensitySpinner = Spinner(this)
         musicIntensitySpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, musicIntensities.map { "$it%" })
         val savedMusicIntensity = preferences.getInt("music_intensity", 10)
@@ -158,7 +155,11 @@ class MainActivity : Activity() {
         musicIntensitySpinner.onItemSelectedListener = simpleSelectionListener { position ->
             preferences.edit().putInt("music_intensity", musicIntensities.getOrElse(position) { 10 }).apply()
         }
-        root.addView(musicIntensitySpinner, lp())
+        root.addView(twoColumnRow(
+            "MUSIC" to button("CHOOSE MUSIC") { pickAudio() },
+            "INTENSITY" to musicIntensitySpinner
+        ), lp())
+        musicLabel = label("No music selected"); root.addView(musicLabel, lp())
         exportStatus = label("Ready to export")
         root.addView(exportStatus, lp())
         exportProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0 }
@@ -205,6 +206,34 @@ class MainActivity : Activity() {
         maxLines = lines
         textSize = 17f
         setPadding(dp(14), dp(10), dp(14), dp(10))
+    }
+
+    private fun twoColumnRow(
+        left: Pair<String, android.view.View>,
+        right: Pair<String, android.view.View>
+    ): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.TOP
+
+        fun column(item: Pair<String, android.view.View>): LinearLayout {
+            return LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(this@MainActivity).apply {
+                    text = item.first
+                    textSize = 13f
+                    setTextColor(0xFF5D646B.toInt())
+                    setPadding(0, 0, 0, dp(2))
+                }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+                addView(item.second, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+        }
+
+        addView(column(left), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = dp(8)
+        })
+        addView(column(right), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginStart = dp(8)
+        })
     }
 
     private fun section(root: LinearLayout, value: String) {
