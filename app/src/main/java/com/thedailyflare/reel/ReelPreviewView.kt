@@ -62,13 +62,11 @@ class ReelPreviewView(context: Context) : View(context) {
         val layer = Bitmap.createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val layerCanvas = Canvas(layer)
         ReelLayout.draw(layerCanvas, title, headlines, width, height, null, false, visible)
-        layerCanvas.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
         val erase = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) }
         val settledMask = Bitmap.createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val maskCanvas = Canvas(settledMask)
         ReelLayout.draw(maskCanvas, title, headlines, width, height, null, false, settledWords)
         layerCanvas.drawBitmap(settledMask, 0f, 0f, erase)
-        layerCanvas.restore()
         settledMask.recycle()
 
         val wordPosition = progress * total
