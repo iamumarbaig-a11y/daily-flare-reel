@@ -3,8 +3,14 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:fillColor="#000000" android:pathData="M0,0h108v108h-108z"/>
-    <path android:fillColor="#FFFFFFFF" android:pathData="M18,18h30c18,0 30,12 30,36s-12,36 -30,36H18z"/>
-    <path android:fillColor="#000000" android:pathData="M31,30h15c11,0 18,7 18,24s-7,24 -18,24H31z"/>
-    <path android:fillColor="#FFFFFFFF" android:pathData="M58,20h34v12H72v16h18v12H72v28H58z"/>
+    <!-- Clean reel / video camera icon with the app's dark-blue identity -->
+    <path android:fillColor="#172A3A" android:pathData="M0,0h108v108h-108z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M18,34c0,-7 5,-12 12,-12h38c7,0 12,5 12,12v40c0,7 -5,12 -12,12H30c-7,0 -12,-5 -12,-12z"/>
+    <!-- camera lens -->
+    <path android:fillColor="#172A3A" android:pathData="M33,40h22c5,0 9,4 9,9v10c0,5 -4,9 -9,9H33c-5,0 -9,-4 -9,-9V49c0,-5 4,-9 9,-9z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M39,46h10c4,0 7,3 7,8s-3,8 -7,8H39c-4,0 -7,-3 -7,-8s3,-8 7,-8z"/>
+    <!-- video camera side -->
+    <path android:fillColor="#172A3A" android:pathData="M66,47l16,-9c4,-2 8,1 8,5v22c0,4 -4,7 -8,5l-16,-9z"/>
+    <!-- subtle reel dots -->
+    <path android:fillColor="#172A3A" android:pathData="M31,27a4,4 0,1 0,0.1,0M47,27a4,4 0,1 0,0.1,0M63,27a4,4 0,1 0,0.1,0"/>
 </vector>
