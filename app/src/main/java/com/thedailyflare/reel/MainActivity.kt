@@ -57,6 +57,7 @@ class MainActivity : Activity() {
     private lateinit var activePreviewEditor: EditText
     private var activeEditorIndex = -1
     private var mainBitmap: Bitmap? = null
+    private val reelBitmaps = mutableListOf<Bitmap>()
     private var ctaBitmap: Bitmap? = null
     private var musicUri: Uri? = null
     private lateinit var musicIntensitySpinner: Spinner
@@ -81,10 +82,6 @@ class MainActivity : Activity() {
         scroll.addView(root)
         root.addView(ImageView(this).apply { setImageResource(R.drawable.daily_flare_logo); adjustViewBounds = true; setPadding(0, 0, 0, 8) }, LinearLayout.LayoutParams(-1, 96))
         root.addView(TextView(this).apply { text = "Daily Flare Reel"; textSize = 30f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 0, 0, 12) }, lp())
-        section(root, "1. MAIN 15-SECOND IMAGE")
-        root.addView(button("CHOOSE MAIN IMAGE") { pickImage(100) }, lp())
-        mainImageLabel = label("No main image selected"); root.addView(mainImageLabel, lp())
-
         // The preview always draws the real final ReelLayout. Editing is done
         // directly over the tapped text block, so the normal state is true WYSIWYG.
         previewFrame = FrameLayout(this)
@@ -112,13 +109,17 @@ class MainActivity : Activity() {
 
         root.addView(previewFrame, lp())
 
-        // Keep the preview clean: all editable text boxes live below it.
+        // Media controls sit directly below the preview and above all text inputs.
+        root.addView(twoColumnRow(
+            "" to button("IMAGE") { pickImages() },
+            "" to button("OUTRO") { pickImage(101) }
+        ), lp())
+        mainImageLabel = label("No images selected"); root.addView(mainImageLabel, lp())
+        ctaImageLabel = label("No outro selected"); root.addView(ctaImageLabel, lp())
+
+        // Keep the preview clean: all editable text boxes live below the media controls.
         root.addView(titleInput, lp())
         headlineInputs.forEach { root.addView(it, lp()) }
-
-        section(root, "2. CTA IMAGE")
-        root.addView(button("CHOOSE CTA") { pickImage(101) }, lp())
-        ctaImageLabel = label("No CTA image selected"); root.addView(ctaImageLabel, lp())
         section(root, "3. KOKORO AI VOICE")
         voiceStatus = label("Checking local Kokoro package...")
         root.addView(voiceStatus, lp())
@@ -145,8 +146,10 @@ class MainActivity : Activity() {
             }
         }
         refreshKokoroState()
-        root.addView(button("TEST") { testVoice() }, lp())
-        root.addView(button("OPEN PKG") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }, lp())
+        root.addView(twoColumnRow(
+            "" to button("TEST") { testVoice() },
+            "" to button("OPEN PKG") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }
+        ), lp())
         section(root, "4. MUSIC")
         musicIntensitySpinner = Spinner(this)
         musicIntensitySpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, musicIntensities.map { "$it%" })
@@ -269,17 +272,50 @@ class MainActivity : Activity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun pickImage(code: Int) { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "image/*"; addCategory(Intent.CATEGORY_OPENABLE); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) }, code) }
+
+    private fun pickImages() {
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            type = "image/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            addCategory(Intent.CATEGORY_OPENABLE)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }, 100)
+    }
     private fun pickAudio() { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "audio/*"; addCategory(Intent.CATEGORY_OPENABLE); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) }, 102) }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK || data?.data == null) return
-        val uri = data.data!!
-        try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
+        if (resultCode != RESULT_OK || data == null) return
         when (requestCode) {
-            100 -> { mainBitmap = decodePortrait(uri); preview.backgroundBitmap = mainBitmap; mainImageLabel.text = "Main image selected"; refreshPreview() }
-            101 -> { ctaBitmap = decodePortrait(uri); preview.ctaBitmap = ctaBitmap; ctaImageLabel.text = "CTA image selected"; preferences.edit().putString("cta_uri", uri.toString()).apply(); preview.invalidate() }
-            102 -> { musicUri = uri; musicLabel.text = "Music selected"; preferences.edit().putString("music_uri", uri.toString()).apply() }
+            100 -> {
+                reelBitmaps.clear()
+                val uris = mutableListOf<Uri>()
+                data.clipData?.let { clip ->
+                    for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri)
+                } ?: data.data?.let { uris.add(it) }
+                uris.forEach { uri ->
+                    try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
+                    decodePortrait(uri)?.let { reelBitmaps.add(it) }
+                }
+                mainBitmap = reelBitmaps.firstOrNull()
+                preview.backgroundBitmap = mainBitmap
+                mainImageLabel.text = when (reelBitmaps.size) {
+                    0 -> "No images selected"
+                    1 -> "1 image selected"
+                    else -> "${reelBitmaps.size} images selected"
+                }
+                refreshPreview()
+            }
+            101 -> {
+                val uri = data.data ?: return
+                try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
+                ctaBitmap = decodePortrait(uri); preview.ctaBitmap = ctaBitmap; ctaImageLabel.text = "Outro selected"; preferences.edit().putString("cta_uri", uri.toString()).apply(); preview.invalidate()
+            }
+            102 -> {
+                val uri = data.data ?: return
+                try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
+                musicUri = uri; musicLabel.text = "Music selected"; preferences.edit().putString("music_uri", uri.toString()).apply()
+            }
         }
     }
 
@@ -292,7 +328,7 @@ class MainActivity : Activity() {
 
     private fun restoreCta(uri: Uri) {
         val bitmap = decodePortrait(uri) ?: return
-        ctaBitmap = bitmap; preview.ctaBitmap = bitmap; ctaImageLabel.text = "CTA image selected"; preview.invalidate()
+        ctaBitmap = bitmap; preview.ctaBitmap = bitmap; ctaImageLabel.text = "Outro selected"; preview.invalidate()
     }
 
     private fun restoreMusic(uri: Uri) {
@@ -402,8 +438,9 @@ class MainActivity : Activity() {
     }
 
     private fun exportReel() {
-        val bg = mainBitmap ?: return toast("Choose the main 15-second image")
-        val cta = ctaBitmap ?: return toast("Choose the 3-second CTA image")
+        val backgrounds = reelBitmaps.ifEmpty { listOfNotNull(mainBitmap) }
+        if (backgrounds.isEmpty()) return toast("Choose at least one image")
+        val cta = ctaBitmap ?: return toast("Choose the outro image")
         val music = musicUri ?: return toast("Choose music")
         val title = titleInput.text.toString().trim().ifBlank { "Main heading" }
         val headlines = headlineInputs.map { it.text.toString().trim() }
@@ -481,7 +518,7 @@ class MainActivity : Activity() {
                 }
 
                 ReelEncoder(this).encode(
-                    bg,
+                    backgrounds,
                     cta,
                     title,
                     headlines,
