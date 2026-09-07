@@ -12,19 +12,23 @@ import android.graphics.Typeface
 object ReelLayout {
     private const val W = 1080f
     private const val H = 1920f
-    private const val LEFT = 108f
-    private const val TOP = 288f
-    private const val RIGHT = 900f
-    private const val GAP = 18f
+
+    // Compact editorial text treatment, tuned for a 1080×1920 reel.
+    private const val LEFT = 80f
+    private const val TOP = 250f
+    private const val RIGHT = 940f
+    private const val GAP = 14f
     private const val SAME_TEXT_GAP = -0.1f
-    private const val TITLE_SIZE = 60f
-    private const val TITLE_PAD_X = 18f
-    private const val TITLE_PAD_Y = 12f
-    private const val TITLE_RADIUS = 14f
-    private const val TEXT_SIZE = 29f
+
+    private const val TITLE_SIZE = 52f
+    private const val TITLE_PAD_X = 16f
+    private const val TITLE_PAD_Y = 10f
+    private const val TITLE_RADIUS = 12f
+
+    private const val TEXT_SIZE = 31f
     private const val TEXT_PAD_X = 14f
-    private const val TEXT_PAD_Y = 8f
-    private const val TEXT_RADIUS = 12f
+    private const val TEXT_PAD_Y = 7f
+    private const val TEXT_RADIUS = 10f
 
     fun drawCover(canvas: Canvas, bitmap: Bitmap, width: Int, height: Int) {
         if (width <= 0 || height <= 0 || bitmap.width <= 0 || bitmap.height <= 0) return
@@ -81,18 +85,19 @@ object ReelLayout {
         val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
             textSize = TITLE_SIZE
-            typeface = Typeface.create("sans", Typeface.BOLD)
+            typeface = Typeface.create("sans-serif", Typeface.BOLD)
         }
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
             textSize = TEXT_SIZE
-            typeface = Typeface.create("sans", Typeface.BOLD)
+            typeface = Typeface.create("sans-serif", Typeface.BOLD)
         }
         val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
 
         var y = TOP
 
-        // The main heading is always visible immediately.
+        // Tight, text-sized white cards. Wrapped lines from one heading remain
+        // visually connected while separate headlines retain a small gap.
         val titleMaxWidth = RIGHT - LEFT - (TITLE_PAD_X * 2f)
         val titleLines = wrap(title.ifBlank { "Main heading" }, titlePaint, titleMaxWidth)
         val titleLineHeight = titlePaint.textSize + 2f
@@ -115,20 +120,16 @@ object ReelLayout {
             y += titleBlockHeight + if (index == titleLines.lastIndex) GAP else SAME_TEXT_GAP
         }
 
-        y += 18f
+        y += 16f
 
         val maxTextWidth = RIGHT - LEFT - TEXT_PAD_X * 2f
         val lineHeight = textPaint.textSize + 3f
         val blockHeight = lineHeight + TEXT_PAD_Y * 2f
 
-        // Reveal body words in their original order. A line/pill is only drawn
-        // when it contains at least one currently visible word.
         var remainingWords = visibleBodyWords.coerceAtLeast(0)
         for (headline in headlines.take(7)) {
             if (headline.isBlank() || remainingWords <= 0) break
 
-            // Count/reveal words without destroying explicit line breaks entered
-            // by the user. Newlines affect display only; narration remains unchanged.
             val words = headline.trim().split(Regex("[\\s\\n]+")).filter { it.isNotBlank() }
             val take = minOf(words.size, remainingWords)
             if (take <= 0) break
@@ -162,8 +163,6 @@ object ReelLayout {
         var remaining = maxWords
         val out = StringBuilder()
 
-        // Process each user-entered line independently so an explicit newline
-        // is never collapsed into a space by the animation.
         val sourceLines = value.split("\n")
         for ((lineIndex, sourceLine) in sourceLines.withIndex()) {
             if (remaining <= 0) break
