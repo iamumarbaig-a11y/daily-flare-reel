@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.RectF
 import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -30,6 +32,9 @@ class ReelEncoder(private val context: Context) {
         output: File,
         effects: List<ImageEffect> = emptyList(),
         intensities: List<Float> = emptyList(),
+        textEffect: String = "FADE + POP",
+        textEffectIntensity: Int = 25,
+        textRevealMode: String = "WORD BY WORD",
         drain: Drain? = null
     ) {
         output.delete()
@@ -42,14 +47,14 @@ class ReelEncoder(private val context: Context) {
         val headlineWordCounts = headlines.take(7).map { it.trim().split(Regex("\\s+")).count { w -> w.isNotBlank() } }
         encodeFrames(backgrounds, ctaBitmap, title, headlines, bodyWordCount, headlineWordCounts,
             headlineSpeechDurationsMs, voiceDurationMs, titleSpeechMs, mainFrames, totalFrames, fps,
-            output, effects, intensities, drain)
+            output, effects, intensities, textEffect, textEffectIntensity, textRevealMode, drain)
     }
 
     private fun encodeFrames(
         backgrounds: List<Bitmap>, ctaBitmap: Bitmap, title: String, headlines: List<String>, bodyWordCount: Int,
         headlineWordCounts: List<Int>, headlineSpeechDurationsMs: List<Long>, voiceDurationMs: Long, titleSpeechMs: Long,
         mainFrames: Int, totalFrames: Int, fps: Int, output: File,
-        effects: List<ImageEffect>, intensities: List<Float>, drain: Drain?
+        effects: List<ImageEffect>, intensities: List<Float>, textEffect: String, textEffectIntensity: Int, textRevealMode: String, drain: Drain?
     ) {
         val width = 1080; val height = 1920
         val titleDelayFrames = ((titleSpeechMs.coerceIn(0L, voiceDurationMs.coerceAtLeast(0L)) / 1000f) * fps).toInt()
@@ -94,8 +99,8 @@ class ReelEncoder(private val context: Context) {
                                 effects.getOrElse(imageIndex) { ImageEffect.ZOOM_IN },
                                 intensities.getOrElse(imageIndex) { 0.18f }, imageProgress)
                         }
-                        val visibleWords = visibleWordsAtFrame(frame, titleDelayFrames, headlineWordCounts, segmentFrames)
-                        ReelLayout.draw(canvas, title, headlines, width, height, null, false, visibleWords)
+                        drawAnimatedText(canvas, title, headlines, width, height, frame, titleDelayFrames,
+                            headlineWordCounts, segmentFrames, textEffect, textEffectIntensity, textRevealMode)
                     } else ReelLayout.drawCover(canvas, ctaBitmap, width, height)
                 } finally { surface.unlockCanvasAndPost(canvas) }
                 while (true) {
@@ -142,6 +147,69 @@ class ReelEncoder(private val context: Context) {
         val totalMeasured = active.sumOf { measuredDurationsMs.getOrElse(it) { 0L }.coerceAtLeast(1L) }.coerceAtLeast(1L); var used = 0
         for ((position, index) in active.withIndex()) { val remainingSlots = active.size - position - 1; val frames = if (position == active.lastIndex) (totalFrames - used).coerceAtLeast(1) else { val measured = measuredDurationsMs.getOrElse(index) { 0L }.coerceAtLeast(1L); (totalFrames.toDouble() * measured / totalMeasured).toInt().coerceAtLeast(1).coerceAtMost((totalFrames - used - remainingSlots).coerceAtLeast(1)) }; result[index] = frames; used += frames }
         return result
+    }
+
+    private fun drawAnimatedText(
+        canvas: Canvas, title: String, headlines: List<String>, width: Int, height: Int,
+        frame: Int, titleDelayFrames: Int, headlineWordCounts: List<Int>, segmentFrames: IntArray,
+        effect: String, intensityPercent: Int, revealMode: String
+    ) {
+        val total = ReelLayout.bodyWordCount(headlines)
+        if (total <= 0) { ReelLayout.draw(canvas, title, headlines, width, height, null, false, 0); return }
+        val wordProgress = if (revealMode == "INSTANT") total.toFloat()
+            else wordProgressAtFrame(frame, titleDelayFrames, headlineWordCounts, segmentFrames)
+        val visible = kotlin.math.ceil(wordProgress).toInt().coerceIn(0, total)
+        if (visible <= 0) { ReelLayout.draw(canvas, title, headlines, width, height, null, false, 0); return }
+        val settled = if (visible >= total && wordProgress >= total.toFloat() - .001f) visible else (visible - 1).coerceAtLeast(0)
+        ReelLayout.draw(canvas, title, headlines, width, height, null, false, settled)
+        if (settled >= visible) return
+
+        val layer = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val layerCanvas = Canvas(layer)
+        ReelLayout.draw(layerCanvas, title, headlines, width, height, null, false, visible)
+        val mask = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        ReelLayout.draw(Canvas(mask), title, headlines, width, height, null, false, settled)
+        layerCanvas.drawBitmap(mask, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+        })
+        mask.recycle()
+
+        val phase = if (visible >= total && wordProgress >= total.toFloat() - .001f) 1f
+            else (wordProgress - kotlin.math.floor(wordProgress.toDouble()).toFloat()).coerceIn(.05f, 1f)
+        val settle = phase * phase * (3f - 2f * phase)
+        val amount = intensityPercent.coerceIn(0, 100) / 100f
+        val save = canvas.save()
+        val alpha = applyTextEffect(canvas, effect, settle, amount, width, height)
+        canvas.drawBitmap(layer, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply { this.alpha = alpha })
+        canvas.restoreToCount(save)
+        layer.recycle()
+    }
+
+    private fun applyTextEffect(canvas: Canvas, effect: String, settle: Float, amount: Float, width: Int, height: Int): Int {
+        if (effect == "NONE" || amount <= 0f) return 255
+        val cx = width / 2f; val cy = height * .42f; val remaining = 1f - settle
+        return when (effect) {
+            "POP" -> { canvas.scale(1f - amount*.32f*remaining, 1f - amount*.32f*remaining, cx, cy); 255 }
+            "FADE + POP" -> { canvas.scale(1f - amount*.28f*remaining, 1f - amount*.28f*remaining, cx, cy); (255f*(.35f+.65f*settle)).toInt() }
+            "SLIDE UP" -> { canvas.translate(0f, height*amount*.10f*remaining); 255 }
+            "BOUNCE" -> { val over=kotlin.math.sin(settle*Math.PI).toFloat()*amount*.16f; val scale=1f+over-remaining*amount*.12f; canvas.scale(scale,scale,cx,cy); 255 }
+            "BLUR IN" -> { canvas.scale(1f+amount*.12f*remaining,1f+amount*.12f*remaining,cx,cy); (255f*(.25f+.75f*settle)).toInt() }
+            "SLIDE + FADE" -> { canvas.translate(0f,height*amount*.08f*remaining); (255f*(.30f+.70f*settle)).toInt() }
+            else -> 255
+        }
+    }
+
+    private fun wordProgressAtFrame(frame: Int, titleDelayFrames: Int, headlineWordCounts: List<Int>, segmentFrames: IntArray): Float {
+        var elapsed = (frame - titleDelayFrames + 1).coerceAtLeast(0).toFloat()
+        var progress = 0f
+        for (index in headlineWordCounts.indices) {
+            val words = headlineWordCounts[index]
+            if (words <= 0) continue
+            val duration = segmentFrames.getOrElse(index) { 0 }.coerceAtLeast(1).toFloat()
+            if (elapsed >= duration) { progress += words; elapsed -= duration }
+            else { progress += words * (elapsed / duration); break }
+        }
+        return progress
     }
 
     private fun visibleWordsAtFrame(frame: Int, titleDelayFrames: Int, headlineWordCounts: List<Int>, segmentFrames: IntArray): Int {
