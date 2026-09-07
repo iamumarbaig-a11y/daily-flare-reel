@@ -51,6 +51,7 @@ class MainActivity : Activity() {
     private lateinit var voiceTts: VoiceTts
     private val voiceSpeeds = listOf(0.75f, 0.9f, 1.0f, 1.1f, 1.25f, 1.5f)
     private lateinit var voiceStatus: TextView
+    private lateinit var openPkgButton: Button
     private lateinit var exportStatus: TextView
     private lateinit var exportProgress: ProgressBar
     private var voicePlayer: MediaPlayer? = null
@@ -185,7 +186,9 @@ class MainActivity : Activity() {
             }
         }
         refreshKokoroState()
-        root.addView(twoColumnRow("" to button("TEST") { testVoice() }, "" to button("OPEN PKG") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }), lp())
+        val testButton = button("TEST") { testVoice() }
+        openPkgButton = button("OPEN PKG") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }
+        root.addView(twoColumnRow("" to testButton, "" to openPkgButton), lp())
         section(root, "4. MUSIC")
         musicIntensitySpinner = Spinner(this)
         musicIntensitySpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, musicIntensities.map { "$it%" })
@@ -330,11 +333,13 @@ class MainActivity : Activity() {
             val restoredIndex = options.indexOfFirst { it.name == (persistedVoiceName ?: previousName) }.takeIf { it >= 0 } ?: 0
             if (options.isNotEmpty()) { voiceSpinner.setSelection(restoredIndex, false); selectedVoice = options[restoredIndex] } else selectedVoice = null
             voiceStatus.text = "Kokoro is ready locally — ${options.size} voices available"
+            openPkgButton.visibility = android.view.View.GONE
             scheduleBackgroundVoicePreview()
         } }, { error -> runOnUiThread {
             voiceOptions = emptyList(); selectedVoice = null
             voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, emptyList<String>())
             voiceStatus.text = error
+            openPkgButton.visibility = android.view.View.VISIBLE
         } })
     }
 
