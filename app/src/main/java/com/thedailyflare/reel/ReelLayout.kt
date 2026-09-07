@@ -8,17 +8,16 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 
-/** 15-second news composition. The final 3 seconds are the supplied CTA image only. */
+/** Dynamic news composition. The final 3 seconds are the supplied outro image. */
 object ReelLayout {
     private const val W = 1080f
     private const val H = 1920f
 
-    // Compact editorial text treatment, tuned for a 1080×1920 reel.
     private const val LEFT = 80f
     private const val TOP = 250f
     private const val RIGHT = 940f
     private const val GAP = 14f
-    private const val SAME_TEXT_GAP = -0.1f
+    private const val SAME_TEXT_GAP = 0f
 
     private const val TITLE_SIZE = 52f
     private const val TITLE_PAD_X = 16f
@@ -76,12 +75,7 @@ object ReelLayout {
         canvas.restore()
     }
 
-    private fun drawNews(
-        canvas: Canvas,
-        title: String,
-        headlines: List<String>,
-        visibleBodyWords: Int
-    ) {
+    private fun drawNews(canvas: Canvas, title: String, headlines: List<String>, visibleBodyWords: Int) {
         val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
             textSize = TITLE_SIZE
@@ -96,81 +90,120 @@ object ReelLayout {
 
         var y = TOP
 
-        // Tight, text-sized white cards. Wrapped lines from one heading remain
-        // visually connected while separate headlines retain a small gap.
         val titleMaxWidth = RIGHT - LEFT - (TITLE_PAD_X * 2f)
         val titleLines = wrap(title.ifBlank { "Main heading" }, titlePaint, titleMaxWidth)
         val titleLineHeight = titlePaint.textSize + 2f
-        val titleBlockHeight = titleLineHeight + TITLE_PAD_Y * 2f
-        for ((index, line) in titleLines.withIndex()) {
-            val blockWidth = minOf(
-                titlePaint.measureText(line) + TITLE_PAD_X * 2f,
-                RIGHT - LEFT
-            )
-            canvas.drawRoundRect(
-                RectF(LEFT, y, LEFT + blockWidth, y + titleBlockHeight),
-                TITLE_RADIUS, TITLE_RADIUS, white
-            )
-            canvas.drawText(
-                line,
-                LEFT + TITLE_PAD_X,
-                y + TITLE_PAD_Y + titlePaint.textSize,
-                titlePaint
-            )
-            y += titleBlockHeight + if (index == titleLines.lastIndex) GAP else SAME_TEXT_GAP
-        }
+        drawConnectedTextBlock(
+            canvas = canvas,
+            lines = titleLines,
+            startY = y,
+            paint = titlePaint,
+            bgPaint = white,
+            maxWidth = RIGHT - LEFT,
+            padX = TITLE_PAD_X,
+            padY = TITLE_PAD_Y,
+            radius = TITLE_RADIUS,
+            lineHeight = titleLineHeight
+        ) { used -> y += used + GAP }
 
         y += 16f
 
         val maxTextWidth = RIGHT - LEFT - TEXT_PAD_X * 2f
         val lineHeight = textPaint.textSize + 3f
-        val blockHeight = lineHeight + TEXT_PAD_Y * 2f
-
         var remainingWords = visibleBodyWords.coerceAtLeast(0)
+
         for (headline in headlines.take(7)) {
             if (headline.isBlank() || remainingWords <= 0) break
-
             val words = headline.trim().split(Regex("[\\s\\n]+")).filter { it.isNotBlank() }
             val take = minOf(words.size, remainingWords)
-            if (take <= 0) break
+            if (take <= 0) continue
             val visibleText = visiblePrefixPreservingLineBreaks(headline, take)
             remainingWords -= take
-
             val lines = wrap(visibleText, textPaint, maxTextWidth)
-            for ((index, line) in lines.withIndex()) {
-                val blockWidth = minOf(
-                    textPaint.measureText(line) + TEXT_PAD_X * 2f,
-                    RIGHT - LEFT
-                )
-                canvas.drawRoundRect(
-                    RectF(LEFT, y, LEFT + blockWidth, y + blockHeight),
-                    TEXT_RADIUS, TEXT_RADIUS, white
-                )
-                canvas.drawText(
-                    line,
-                    LEFT + TEXT_PAD_X,
-                    y + TEXT_PAD_Y + textPaint.textSize,
-                    textPaint
-                )
-                y += blockHeight + if (index == lines.lastIndex) GAP else SAME_TEXT_GAP
-                if (y > H - 80f) return
-            }
+
+            drawConnectedTextBlock(
+                canvas = canvas,
+                lines = lines,
+                startY = y,
+                paint = textPaint,
+                bgPaint = white,
+                maxWidth = RIGHT - LEFT,
+                padX = TEXT_PAD_X,
+                padY = TEXT_PAD_Y,
+                radius = TEXT_RADIUS,
+                lineHeight = lineHeight
+            ) { used -> y += used + GAP }
+
+            if (y > H - 80f) return
         }
+    }
+
+    private fun drawConnectedTextBlock(
+        canvas: Canvas,
+        lines: List<String>,
+        startY: Float,
+        paint: Paint,
+        bgPaint: Paint,
+        maxWidth: Float,
+        padX: Float,
+        padY: Float,
+        radius: Float,
+        lineHeight: Float,
+        onComplete: (Float) -> Unit
+    ) {
+        if (lines.isEmpty()) return
+        val lineRects = ArrayList<RectF>(lines.size)
+        val heights = ArrayList<Float>(lines.size)
+        var y = startY
+
+        for (line in lines) {
+            val width = minOf(paint.measureText(line) + padX * 2f, maxWidth)
+            val h = lineHeight + padY * 2f
+            lineRects.add(RectF(LEFT, y, LEFT + width, y + h))
+            heights.add(h)
+            y += h + SAME_TEXT_GAP
+        }
+
+        // Build one merged highlight shape from adjacent line rectangles.
+        // The overlap removes the horizontal seam while preserving rounded outer corners.
+        canvas.save()
+        for (i in lineRects.indices) {
+            val rect = lineRects[i]
+            val topRadius = if (i == 0) radius else 0f
+            val bottomRadius = if (i == lineRects.lastIndex) radius else 0f
+            val path = android.graphics.Path().apply {
+                addRoundRect(
+                    RectF(rect.left, rect.top, rect.right, rect.bottom),
+                    floatArrayOf(
+                        topRadius, topRadius,
+                        topRadius, topRadius,
+                        bottomRadius, bottomRadius,
+                        bottomRadius, bottomRadius
+                    ),
+                    android.graphics.Path.Direction.CW
+                )
+            }
+            canvas.drawPath(path, bgPaint)
+        }
+        canvas.restore()
+
+        for (i in lineRects.indices) {
+            val rect = lineRects[i]
+            canvas.drawText(lines[i], rect.left + padX, rect.top + padY + paint.textSize, paint)
+        }
+
+        onComplete(heights.sum() + SAME_TEXT_GAP * (lines.size - 1))
     }
 
     private fun visiblePrefixPreservingLineBreaks(value: String, maxWords: Int): String {
         if (maxWords <= 0) return ""
         var remaining = maxWords
         val out = StringBuilder()
-
         val sourceLines = value.split("\n")
         for ((lineIndex, sourceLine) in sourceLines.withIndex()) {
             if (remaining <= 0) break
             val words = sourceLine.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
-            if (words.isEmpty()) {
-                if (lineIndex < sourceLines.lastIndex && out.isNotEmpty()) out.append('\n')
-                continue
-            }
+            if (words.isEmpty()) continue
             val take = minOf(words.size, remaining)
             if (out.isNotEmpty() && lineIndex > 0) out.append('\n')
             out.append(words.take(take).joinToString(" "))
