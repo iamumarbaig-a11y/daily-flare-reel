@@ -40,7 +40,7 @@ object ReelLayout {
         } else {
             val cropHeight = (bitmap.width / targetRatio).toInt().coerceAtLeast(1)
             val top = ((bitmap.height - cropHeight) / 2).coerceAtLeast(0)
-            Rect(0, top, bitmap.width, (top + cropHeight).coerceAtMost(bitmap.height))
+            Rect(0, top, (top + cropHeight).coerceAtMost(bitmap.height), bitmap.width)
         }
         canvas.drawBitmap(bitmap, src, Rect(0, 0, width, height), null)
     }
@@ -152,28 +152,34 @@ object ReelLayout {
         onComplete: (Float) -> Unit
     ) {
         if (lines.isEmpty()) return
+
         val lineRects = ArrayList<RectF>(lines.size)
-        val heights = ArrayList<Float>(lines.size)
         var y = startY
 
         for (line in lines) {
             val width = minOf(paint.measureText(line) + padX * 2f, maxWidth)
             val h = lineHeight + padY * 2f
             lineRects.add(RectF(LEFT, y, LEFT + width, y + h))
-            heights.add(h)
             y += h + SAME_TEXT_GAP
         }
 
-        // Build one merged highlight shape from adjacent line rectangles.
-        // The overlap removes the horizontal seam while preserving rounded outer corners.
-        canvas.save()
+        // Draw the highlight as one continuous union. For wrapped lines, extend
+        // each adjacent pair to the larger right edge in their shared strip so
+        // there can be no visible horizontal seam between lines.
         for (i in lineRects.indices) {
             val rect = lineRects[i]
+            val previousRight = if (i > 0) lineRects[i - 1].right else rect.left
+            val nextRight = if (i < lineRects.lastIndex) lineRects[i + 1].right else rect.left
+            val left = rect.left
+            val right = maxOf(rect.right, previousRight, nextRight)
+            val top = rect.top
+            val bottom = rect.bottom
+
             val topRadius = if (i == 0) radius else 0f
             val bottomRadius = if (i == lineRects.lastIndex) radius else 0f
             val path = android.graphics.Path().apply {
                 addRoundRect(
-                    RectF(rect.left, rect.top, rect.right, rect.bottom),
+                    RectF(left, top, right, bottom),
                     floatArrayOf(
                         topRadius, topRadius,
                         topRadius, topRadius,
@@ -185,14 +191,13 @@ object ReelLayout {
             }
             canvas.drawPath(path, bgPaint)
         }
-        canvas.restore()
 
         for (i in lineRects.indices) {
             val rect = lineRects[i]
             canvas.drawText(lines[i], rect.left + padX, rect.top + padY + paint.textSize, paint)
         }
 
-        onComplete(heights.sum() + SAME_TEXT_GAP * (lines.size - 1))
+        onComplete(lineRects.sumOf { it.height().toDouble() }.toFloat() + SAME_TEXT_GAP * (lines.size - 1))
     }
 
     private fun visiblePrefixPreservingLineBreaks(value: String, maxWords: Int): String {
