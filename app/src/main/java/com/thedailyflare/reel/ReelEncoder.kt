@@ -69,6 +69,10 @@ class ReelEncoder(private val context: Context) {
         val codec = MediaCodec.createEncoderByType("video/avc"); val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         var surface: Surface? = null; var track = -1; var started = false; val info = MediaCodec.BufferInfo()
         val frameIntervalNs = 1_000_000_000L / fps; var nextFrameNs = System.nanoTime()
+        // Reuse animation buffers. Allocating two full-HD bitmaps every frame caused
+        // GC/render stalls and stretched the encoded video timeline beyond the narration.
+        val animatedLayer = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val settledMask = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         try {
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); surface = codec.createInputSurface(); codec.start()
             for (frame in 0 until totalFrames) {
@@ -100,7 +104,8 @@ class ReelEncoder(private val context: Context) {
                                 intensities.getOrElse(imageIndex) { 0.18f }, imageProgress)
                         }
                         drawAnimatedText(canvas, title, headlines, width, height, frame, titleDelayFrames,
-                            headlineWordCounts, segmentFrames, textEffect, textEffectIntensity, textRevealMode)
+                            headlineWordCounts, segmentFrames, textEffect, textEffectIntensity, textRevealMode,
+                            animatedLayer, settledMask)
                     } else ReelLayout.drawCover(canvas, ctaBitmap, width, height)
                 } finally { surface.unlockCanvasAndPost(canvas) }
                 while (true) {
@@ -152,7 +157,8 @@ class ReelEncoder(private val context: Context) {
     private fun drawAnimatedText(
         canvas: Canvas, title: String, headlines: List<String>, width: Int, height: Int,
         frame: Int, titleDelayFrames: Int, headlineWordCounts: List<Int>, segmentFrames: IntArray,
-        effect: String, intensityPercent: Int, revealMode: String
+        effect: String, intensityPercent: Int, revealMode: String,
+        layer: Bitmap, mask: Bitmap
     ) {
         val total = ReelLayout.bodyWordCount(headlines)
         if (total <= 0) { ReelLayout.draw(canvas, title, headlines, width, height, null, false, 0); return }
@@ -164,15 +170,14 @@ class ReelEncoder(private val context: Context) {
         ReelLayout.draw(canvas, title, headlines, width, height, null, false, settled)
         if (settled >= visible) return
 
-        val layer = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        layer.eraseColor(android.graphics.Color.TRANSPARENT)
+        mask.eraseColor(android.graphics.Color.TRANSPARENT)
         val layerCanvas = Canvas(layer)
         ReelLayout.draw(layerCanvas, title, headlines, width, height, null, false, visible)
-        val mask = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         ReelLayout.draw(Canvas(mask), title, headlines, width, height, null, false, settled)
         layerCanvas.drawBitmap(mask, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
             xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
         })
-        mask.recycle()
 
         val phase = if (visible >= total && wordProgress >= total.toFloat() - .001f) 1f
             else (wordProgress - kotlin.math.floor(wordProgress.toDouble()).toFloat()).coerceIn(.05f, 1f)
@@ -182,7 +187,6 @@ class ReelEncoder(private val context: Context) {
         val alpha = applyTextEffect(canvas, effect, settle, amount, width, height)
         canvas.drawBitmap(layer, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply { this.alpha = alpha })
         canvas.restoreToCount(save)
-        layer.recycle()
     }
 
     private fun applyTextEffect(canvas: Canvas, effect: String, settle: Float, amount: Float, width: Int, height: Int): Int {
