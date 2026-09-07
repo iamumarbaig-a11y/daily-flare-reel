@@ -9,6 +9,9 @@ import android.os.Handler
 import android.os.Looper
 import android.view.ViewGroup
 import android.widget.*
+import android.graphics.drawable.GradientDrawable
+import android.graphics.Typeface
+import android.view.Gravity
 import androidx.documentfile.provider.DocumentFile
 import com.k2fsa.sherpa.onnx.*
 import java.io.File
@@ -31,46 +34,76 @@ class KokoroExperimentActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val scroll = ScrollView(this)
+        val scroll = ScrollView(this).apply { setBackgroundColor(0xFFF6F7F8.toInt()) }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 32, 32, 32)
+            setPadding(dp(20), dp(20), dp(20), dp(28))
         }
         scroll.addView(root)
 
         root.addView(TextView(this).apply {
-            text = "Kokoro AI Voice — Experimental"
-            textSize = 26f
+            text = "Kokoro Package"
+            textSize = 30f
+            typeface = Typeface.create("sans", Typeface.BOLD)
+            setTextColor(0xFF172A3A.toInt())
         }, lp())
 
-        root.addView(button("CHOOSE KOKORO MODEL PACKAGE") { choosePackage() }, lp())
+        root.addView(TextView(this).apply {
+            text = "Import and manage the local Kokoro voice model"
+            textSize = 15f
+            setTextColor(0xFF5D646B.toInt())
+            setPadding(0, dp(4), 0, dp(18))
+        }, lp())
+
+        root.addView(card().apply {
+            addView(TextView(this@KokoroExperimentActivity).apply {
+                text = "MODEL PACKAGE"
+                textSize = 13f
+                typeface = Typeface.create("sans", Typeface.BOLD)
+                setTextColor(0xFF5D646B.toInt())
+            }, lp())
+            addView(button("CHOOSE PACKAGE") { choosePackage() }, lp())
+        }, lp())
 
         status = TextView(this).apply {
-            text = "Select the already-extracted Kokoro model folder. The folder is reused by the main reel voice system."
-            setPadding(0, 12, 0, 12)
+            text = "Select your extracted Kokoro model folder."
+            textSize = 15f
+            setTextColor(0xFF5D646B.toInt())
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            background = rounded(0xFFFFFFFF.toInt(), 16)
         }
         root.addView(status, lp())
 
+        root.addView(sectionLabel("VOICE TEST"), lp())
         textInput = EditText(this).apply {
             setText("Hello. This is a test of Kokoro running locally on this phone.")
             minLines = 4
+            textSize = 16f
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = rounded(0xFFFFFFFF.toInt(), 16)
         }
         root.addView(textInput, lp())
-        root.addView(TextView(this).apply { text = "SELECT VOICE" }, lp())
-        voiceSpinner = Spinner(this)
-        voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voices.map { it.label })
-        root.addView(voiceSpinner, lp())
-        root.addView(TextView(this).apply { text = "VOICE SPEED" }, lp())
-        speedSpinner = Spinner(this)
-        speedSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, speeds.map { "${it}×" })
-        speedSpinner.setSelection(speeds.indexOf(1.0f))
-        root.addView(speedSpinner, lp())
-        root.addView(button("GENERATE SELECTED VOICE") { generate(voices[voiceSpinner.selectedItemPosition].sid, speeds[speedSpinner.selectedItemPosition]) }, lp())
-        root.addView(TextView(this).apply {
-            text = "This manages the shared Kokoro model used by voice testing and reel export. Your selected model folder is preserved."
-        }, lp())
-        setContentView(scroll)
 
+        voiceSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@KokoroExperimentActivity, android.R.layout.simple_spinner_dropdown_item, voices.map { it.label })
+            background = rounded(0xFFFFFFFF.toInt(), 14)
+        }
+        speedSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@KokoroExperimentActivity, android.R.layout.simple_spinner_dropdown_item, speeds.map { "${it}×" })
+            setSelection(speeds.indexOf(1.0f))
+            background = rounded(0xFFFFFFFF.toInt(), 14)
+        }
+        root.addView(twoColumnRow("VOICE" to voiceSpinner, "SPEED" to speedSpinner), lp())
+        root.addView(button("GENERATE VOICE") { generate(voices[voiceSpinner.selectedItemPosition].sid, speeds[speedSpinner.selectedItemPosition]) }, lp())
+
+        root.addView(TextView(this).apply {
+            text = "The imported package is shared with Daily Flare Reel and remains available for voice generation and export."
+            textSize = 14f
+            setTextColor(0xFF5D646B.toInt())
+            setPadding(dp(4), dp(12), dp(4), 0)
+        }, lp())
+
+        setContentView(scroll)
         restoreImportedPackage()
     }
 
@@ -290,11 +323,62 @@ class KokoroExperimentActivity : Activity() {
     private fun button(text: String, action: () -> Unit) =
         Button(this).apply {
             this.text = text
+            textSize = 15f
+            isAllCaps = false
+            setTextColor(0xFFFFFFFF.toInt())
+            typeface = Typeface.create("sans", Typeface.BOLD)
+            minHeight = dp(52)
+            background = rounded(0xFF172A3A.toInt(), 18)
+            elevation = dp(3).toFloat()
             setOnClickListener { action() }
         }
 
-    private fun lp() = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
+    private fun sectionLabel(text: String) = TextView(this).apply {
+        this.text = text
+        textSize = 13f
+        typeface = Typeface.create("sans", Typeface.BOLD)
+        setTextColor(0xFF5D646B.toInt())
+        setPadding(0, dp(20), 0, dp(6))
+    }
+
+    private fun twoColumnRow(left: Pair<String, View>, right: Pair<String, View>) =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            fun column(item: Pair<String, View>) = LinearLayout(this@KokoroExperimentActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(this@KokoroExperimentActivity).apply {
+                    text = item.first
+                    textSize = 12f
+                    typeface = Typeface.create("sans", Typeface.BOLD)
+                    setTextColor(0xFF5D646B.toInt())
+                    setPadding(0, 0, 0, dp(4))
+                })
+                addView(item.second, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+            addView(column(left), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(6) })
+            addView(column(right), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(6) })
+        }
+
+    private fun card() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(14), dp(14), dp(14), dp(14))
+        background = rounded(0xFFFFFFFF.toInt(), 18)
+        elevation = dp(2).toFloat()
+    }
+
+    private fun rounded(color: Int, radius: Int) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(radius).toFloat()
+    }
+
+    private fun lp() = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        topMargin = dp(5)
+        bottomMargin = dp(5)
+    }
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     private fun toast(s: String) =
         Toast.makeText(this, s, Toast.LENGTH_LONG).show()
+
 }
