@@ -243,91 +243,12 @@ class MainActivity : Activity() {
 
     private fun refreshWatcher() = object : TextWatcher {
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { refreshPreview(); scheduleBackgroundVoicePreview() }
+        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { refreshPreview() }
         override fun afterTextChanged(s: Editable?) = Unit
     }
 
-
-    private fun currentSpeechText(): String {
-        val parts = mutableListOf<String>()
-        val heading = titleInput.text.toString().trim()
-        if (heading.isNotBlank()) parts.add(heading)
-        headlineInputs.map { it.text.toString().trim() }.filter { it.isNotBlank() }.forEach { parts.add(it) }
-        return parts.joinToString(". ")
-    }
-
-    private fun currentVoicePreviewKey(text: String, voice: VoiceTts.VoiceOption, speed: Float): String =
-        "${voice.name}|$speed|$text"
-
-    private fun scheduleBackgroundVoicePreview() {
-        if (!::voiceTts.isInitialized || !::titleInput.isInitialized) return
-        voicePreviewGenerationVersion++
-        voicePreviewHandler.removeCallbacks(voicePreviewDebounce)
-        if (currentSpeechText().isBlank()) {
-            cachedVoiceReady = false
-            cachedVoiceDurationMs = 0L
-            cachedVoiceKey = null
-            return
-        }
-        voicePreviewHandler.postDelayed(voicePreviewDebounce, 700L)
-    }
-
-    private fun generateBackgroundVoicePreview() {
-        val voice = selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition) ?: return
-        val text = currentSpeechText()
-        if (text.isBlank()) return
-        val speed = voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition) { 1.0f }
-        val key = currentVoicePreviewKey(text, voice, speed)
-        if (cachedVoiceReady && cachedVoiceKey == key && cachedVoiceFile.exists()) return
-        val version = voicePreviewGenerationVersion
-        voiceStatus.text = "Preparing narration for export in background..."
-        thread(name = "daily-flare-background-kokoro") {
-            val temp = File(cacheDir, "daily_flare_preview_voice_$version.wav")
-            temp.delete()
-            voiceTts.speakToFile(text, voice, temp, speed) { ok, _ ->
-                val duration = if (ok && temp.exists() && temp.length() > 0L) getAudioDurationMs(temp) else 0L
-                runOnUiThread {
-                    if (version != voicePreviewGenerationVersion || currentVoicePreviewKey(currentSpeechText(), voice, speed) != key) {
-                        temp.delete()
-                        return@runOnUiThread
-                    }
-                    if (!ok || duration <= 0L) {
-                        temp.delete()
-                        cachedVoiceReady = false
-                        voiceStatus.text = "Narration preparation failed — edit text or try again"
-                        return@runOnUiThread
-                    }
-                    cachedVoiceFile.delete()
-                    temp.copyTo(cachedVoiceFile, overwrite = true)
-                    temp.delete()
-                    cachedVoiceDurationMs = duration
-                    cachedVoiceKey = key
-                    cachedVoiceReady = true
-                    voiceStatus.text = "Narration ready for export · ${formatDuration(duration)}"
-                    prepareCtaVoice(voice, speed)
-                    updateVisualPreview(visualPreviewSlider.progress / 100f)
-                }
-            }
-        }
-    }
-
-    private fun prepareCtaVoice(voice: VoiceTts.VoiceOption, speed: Float) {
-        val key = "${voice.name}|$speed|$ctaText"
-        if (cachedCtaReady && cachedCtaKey == key && cachedCtaVoiceFile.exists() && cachedCtaVoiceFile.length() > 0L) return
-        thread(name = "daily-flare-cta-kokoro") {
-            val temp = File(cacheDir, "daily_flare_prepared_cta_temp.wav")
-            temp.delete()
-            voiceTts.speakToFile(ctaText, voice, temp, speed) { ok, _ ->
-                if (ok && temp.exists() && temp.length() > 0L && currentVoicePreviewKey(currentSpeechText(), voice, speed).isNotBlank()) {
-                    cachedCtaVoiceFile.delete()
-                    temp.copyTo(cachedCtaVoiceFile, overwrite = true)
-                    temp.delete()
-                    cachedCtaKey = key
-                    cachedCtaReady = true
-                } else temp.delete()
-            }
-        }
-    }
+    // Heading and subheadings never trigger Kokoro in the background.
+    // Narration is generated only when TEST is pressed or when EXPORT REEL starts.
 
     private fun refreshKokoroState() {
         val previousName = selectedVoice?.name
