@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.RectF
+import android.graphics.Paint
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -74,9 +75,23 @@ class ReelEncoder(private val context: Context) {
                         val segmentEnd = ((imageIndex + 1L) * mainFrames) / count
                         val segmentLength = (segmentEnd - segmentStart).coerceAtLeast(1L)
                         val imageProgress = ((frame - segmentStart).toFloat() / segmentLength.toFloat()).coerceIn(0f, 1f)
-                        drawEffectCover(canvas, backgrounds[imageIndex], width, height,
-                            effects.getOrElse(imageIndex) { ImageEffect.ZOOM_IN },
-                            intensities.getOrElse(imageIndex) { 0.18f }, imageProgress)
+                        // Smooth crossfade during the final 0.35s of each image segment.
+                        val transitionFrames = minOf((fps * 0.35f).toInt().coerceAtLeast(1), (segmentLength / 2).toInt().coerceAtLeast(1))
+                        val framesToEnd = (segmentEnd - frame).toInt()
+                        if (imageIndex < count - 1 && framesToEnd <= transitionFrames) {
+                            val fade = (1f - framesToEnd.toFloat() / transitionFrames.toFloat()).coerceIn(0f, 1f)
+                            drawEffectCover(canvas, backgrounds[imageIndex], width, height,
+                                effects.getOrElse(imageIndex) { ImageEffect.ZOOM_IN },
+                                intensities.getOrElse(imageIndex) { 0.18f }, imageProgress, 1f)
+                            val nextProgress = (fade * transitionFrames / segmentLength.toFloat()).coerceIn(0f, 1f)
+                            drawEffectCover(canvas, backgrounds[imageIndex + 1], width, height,
+                                effects.getOrElse(imageIndex + 1) { ImageEffect.ZOOM_IN },
+                                intensities.getOrElse(imageIndex + 1) { 0.18f }, nextProgress, fade)
+                        } else {
+                            drawEffectCover(canvas, backgrounds[imageIndex], width, height,
+                                effects.getOrElse(imageIndex) { ImageEffect.ZOOM_IN },
+                                intensities.getOrElse(imageIndex) { 0.18f }, imageProgress)
+                        }
                         val visibleWords = visibleWordsAtFrame(frame, titleDelayFrames, headlineWordCounts, segmentFrames)
                         ReelLayout.draw(canvas, title, headlines, width, height, null, false, visibleWords)
                     } else ReelLayout.drawCover(canvas, ctaBitmap, width, height)
@@ -105,7 +120,7 @@ class ReelEncoder(private val context: Context) {
         require(output.exists() && output.length() > 0L) { "18-second video produced no output" }
     }
 
-    private fun drawEffectCover(canvas: Canvas, bitmap: Bitmap, width: Int, height: Int, effect: ImageEffect, intensity: Float, progress: Float) {
+    private fun drawEffectCover(canvas: Canvas, bitmap: Bitmap, width: Int, height: Int, effect: ImageEffect, intensity: Float, progress: Float, alpha: Float = 1f) {
         if (bitmap.width <= 0 || bitmap.height <= 0) return
         val amount = intensity.coerceIn(0f, 0.5f)
         val p = progress.coerceIn(0f, 1f)
@@ -117,7 +132,7 @@ class ReelEncoder(private val context: Context) {
         val travelY = (drawHeight - height).coerceAtLeast(0f) * amount
         val left = when (effect) { ImageEffect.PAN_LEFT -> -travelX * eased; ImageEffect.PAN_RIGHT -> -travelX * (1f - eased); else -> (width - drawWidth) / 2f }
         val top = when (effect) { ImageEffect.PAN_UP -> -travelY * eased; ImageEffect.PAN_DOWN -> -travelY * (1f - eased); else -> (height - drawHeight) / 2f }
-        canvas.drawBitmap(bitmap, null, RectF(left, top, left + drawWidth, top + drawHeight), null)
+        canvas.drawBitmap(bitmap, null, RectF(left, top, left + drawWidth, top + drawHeight), Paint(Paint.ANTI_ALIAS_FLAG).apply { this.alpha = (alpha.coerceIn(0f, 1f) * 255).toInt() })
     }
 
     private fun allocateSegmentFrames(totalFrames: Int, wordCounts: List<Int>, measuredDurationsMs: List<Long>): IntArray {
