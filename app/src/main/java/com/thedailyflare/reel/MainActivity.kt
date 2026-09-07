@@ -40,6 +40,7 @@ class MainActivity : Activity() {
     private lateinit var preview: ReelPreviewView
     private lateinit var mainImageLabel: TextView
     private lateinit var ctaImageLabel: TextView
+    private lateinit var imageStrip: LinearLayout
     private lateinit var musicLabel: TextView
     private lateinit var voiceSpinner: Spinner
     private lateinit var speedSpinner: Spinner
@@ -54,8 +55,6 @@ class MainActivity : Activity() {
     private lateinit var titleInput: EditText
     private val headlineInputs = mutableListOf<EditText>()
     private lateinit var previewFrame: FrameLayout
-    private lateinit var activePreviewEditor: EditText
-    private var activeEditorIndex = -1
     private var mainBitmap: Bitmap? = null
     private val reelBitmaps = mutableListOf<Bitmap>()
     private var ctaBitmap: Bitmap? = null
@@ -82,501 +81,196 @@ class MainActivity : Activity() {
         scroll.addView(root)
         root.addView(ImageView(this).apply { setImageResource(R.drawable.daily_flare_logo); adjustViewBounds = true; setPadding(0, 0, 0, 8) }, LinearLayout.LayoutParams(-1, 96))
         root.addView(TextView(this).apply { text = "Daily Flare Reel"; textSize = 30f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 0, 0, 12) }, lp())
-        // The preview always draws the real final ReelLayout. Editing is done
-        // directly over the tapped text block, so the normal state is true WYSIWYG.
         previewFrame = FrameLayout(this)
-        preview = ReelPreviewView(this).apply {
-            setBackgroundColor(0xFFEFEFEF.toInt())
-        }
+        preview = ReelPreviewView(this).apply { setBackgroundColor(0xFFEFEFEF.toInt()) }
         previewFrame.addView(preview, FrameLayout.LayoutParams(-1, -2))
 
-        titleInput = edit("Main heading", 2).apply {
-            addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = refreshPreview()
-                override fun afterTextChanged(s: Editable?) = Unit
-            })
-        }
-        for (i in 1..7) {
-            headlineInputs.add(edit("Subheading $i", 2).apply {
-                addTextChangedListener(object : TextWatcher {
-                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = refreshPreview()
-                    override fun afterTextChanged(s: Editable?) = Unit
-                })
-            })
-        }
+        titleInput = edit("Main heading", 2).apply { addTextChangedListener(refreshWatcher()) }
+        for (i in 1..7) headlineInputs.add(edit("Subheading $i", 2).apply { addTextChangedListener(refreshWatcher()) })
 
         root.addView(previewFrame, lp())
 
-        // Media controls sit directly below the preview and above all text inputs.
         root.addView(twoColumnRow(
             "" to button("IMAGE") { pickImages() },
             "" to button("OUTRO") { pickImage(101) }
         ), lp())
         mainImageLabel = label("No images selected"); root.addView(mainImageLabel, lp())
+        imageStrip = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        root.addView(imageStrip, lp())
         ctaImageLabel = label("No outro selected"); root.addView(ctaImageLabel, lp())
 
-        // Keep the preview clean: all editable text boxes live below the media controls.
         root.addView(titleInput, lp())
         headlineInputs.forEach { root.addView(it, lp()) }
         section(root, "3. KOKORO AI VOICE")
-        voiceStatus = label("Checking local Kokoro package...")
-        root.addView(voiceStatus, lp())
-        voiceSpinner = Spinner(this)
-        speedSpinner = Spinner(this)
-        speedSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceSpeeds.map { it.toString() + "×" })
+        voiceStatus = label("Checking local Kokoro package..."); root.addView(voiceStatus, lp())
+        voiceSpinner = Spinner(this); speedSpinner = Spinner(this)
+        speedSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceSpeeds.map { "${it}×" })
         val savedSpeed = preferences.getFloat("voice_speed", 1.0f)
-        speedSpinner.setSelection(voiceSpeeds.indexOf(savedSpeed).takeIf { it >= 0 } ?: voiceSpeeds.indexOf(1.0f), false)
-        speedSpinner.onItemSelectedListener = simpleSelectionListener { position ->
-            preferences.edit().putFloat("voice_speed", voiceSpeeds.getOrElse(position) { 1.0f }).apply()
-        }
-        root.addView(twoColumnRow(
-            "VOICE" to voiceSpinner,
-            "SPEED" to speedSpinner
-        ), lp())
+        speedSpinner.setSelection(voiceSpeeds.indexOf(savedSpeed).takeIf { it >= 0 } ?: 2, false)
+        speedSpinner.onItemSelectedListener = simpleSelectionListener { position -> preferences.edit().putFloat("voice_speed", voiceSpeeds.getOrElse(position) { 1.0f }).apply() }
+        root.addView(twoColumnRow("VOICE" to voiceSpinner, "SPEED" to speedSpinner), lp())
         voiceTts = VoiceTts(this)
         voiceSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
-                selectedVoice = null
-            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) { selectedVoice = null }
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
                 selectedVoice = voiceOptions.getOrNull(position)
                 selectedVoice?.name?.let { preferences.edit().putString("voice_name", it).apply() }
             }
         }
         refreshKokoroState()
-        root.addView(twoColumnRow(
-            "" to button("TEST") { testVoice() },
-            "" to button("OPEN PKG") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }
-        ), lp())
+        root.addView(twoColumnRow("" to button("TEST") { testVoice() }, "" to button("OPEN PKG") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }), lp())
         section(root, "4. MUSIC")
         musicIntensitySpinner = Spinner(this)
         musicIntensitySpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, musicIntensities.map { "$it%" })
         val savedMusicIntensity = preferences.getInt("music_intensity", 10)
-        musicIntensitySpinner.setSelection(musicIntensities.indexOf(savedMusicIntensity).takeIf { it >= 0 } ?: musicIntensities.indexOf(10), false)
-        musicIntensitySpinner.onItemSelectedListener = simpleSelectionListener { position ->
-            preferences.edit().putInt("music_intensity", musicIntensities.getOrElse(position) { 10 }).apply()
-        }
-        root.addView(twoColumnRow(
-            "MUSIC" to button("CHOOSE MUSIC") { pickAudio() },
-            "INTENSITY" to musicIntensitySpinner
-        ), lp())
+        musicIntensitySpinner.setSelection(musicIntensities.indexOf(savedMusicIntensity).takeIf { it >= 0 } ?: 1, false)
+        musicIntensitySpinner.onItemSelectedListener = simpleSelectionListener { position -> preferences.edit().putInt("music_intensity", musicIntensities.getOrElse(position) { 10 }).apply() }
+        root.addView(twoColumnRow("MUSIC" to button("CHOOSE MUSIC") { pickAudio() }, "INTENSITY" to musicIntensitySpinner), lp())
         musicLabel = label("No music selected"); root.addView(musicLabel, lp())
-        exportStatus = label("Ready to export")
-        root.addView(exportStatus, lp())
+        exportStatus = label("Ready to export"); root.addView(exportStatus, lp())
         exportProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0 }
         root.addView(exportProgress, lp())
         root.addView(button("EXPORT REEL") { exportReel() }, lp())
-
-
         setContentView(scroll)
     }
 
+    private fun refreshWatcher() = object : TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = refreshPreview()
+        override fun afterTextChanged(s: Editable?) = Unit
+    }
+
     private fun refreshKokoroState() {
-        // Keep the exact voice selected by the user when returning from the
-        // model package screen. Do not fall back silently to another voice.
         val previousName = selectedVoice?.name
-        voiceTts.initialize({ options ->
-            runOnUiThread {
-                voiceOptions = options
-                val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options.map { it.label })
-                voiceSpinner.adapter = adapter
-                val persistedVoiceName = preferences.getString("voice_name", null)
-                val restoredIndex = options.indexOfFirst { it.name == (persistedVoiceName ?: previousName) }
-                    .takeIf { it >= 0 } ?: 0
-                if (options.isNotEmpty()) {
-                    voiceSpinner.setSelection(restoredIndex, false)
-                    selectedVoice = options[restoredIndex]
-                } else {
-                    selectedVoice = null
-                }
-                voiceStatus.text = "Kokoro is ready locally — " + options.size + " voices available"
-            }
-        }, { error ->
-            runOnUiThread {
-                voiceOptions = emptyList()
-                selectedVoice = null
-                voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, emptyList<String>())
-                voiceStatus.text = error
-            }
-        })
+        voiceTts.initialize({ options -> runOnUiThread {
+            voiceOptions = options
+            voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options.map { it.label })
+            val persistedVoiceName = preferences.getString("voice_name", null)
+            val restoredIndex = options.indexOfFirst { it.name == (persistedVoiceName ?: previousName) }.takeIf { it >= 0 } ?: 0
+            if (options.isNotEmpty()) { voiceSpinner.setSelection(restoredIndex, false); selectedVoice = options[restoredIndex] } else selectedVoice = null
+            voiceStatus.text = "Kokoro is ready locally — ${options.size} voices available"
+        } }, { error -> runOnUiThread {
+            voiceOptions = emptyList(); selectedVoice = null
+            voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, emptyList<String>())
+            voiceStatus.text = error
+        } })
     }
 
-    private fun edit(hint: String, lines: Int): EditText = EditText(this).apply {
-        this.hint = hint
-        setSingleLine(lines == 1)
-        maxLines = lines
-        textSize = 17f
-        setPadding(dp(14), dp(10), dp(14), dp(10))
+    private fun edit(hint: String, lines: Int) = EditText(this).apply {
+        this.hint = hint; setSingleLine(lines == 1); maxLines = lines; textSize = 17f; setPadding(dp(14), dp(10), dp(14), dp(10))
     }
 
-    private fun twoColumnRow(
-        left: Pair<String, android.view.View>,
-        right: Pair<String, android.view.View>
-    ): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.TOP
-
-        fun column(item: Pair<String, android.view.View>): LinearLayout {
-            return LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(TextView(this@MainActivity).apply {
-                    text = item.first
-                    textSize = 13f
-                    setTextColor(0xFF5D646B.toInt())
-                    setPadding(0, 0, 0, dp(2))
-                }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-                addView(item.second, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-            }
+    private fun twoColumnRow(left: Pair<String, android.view.View>, right: Pair<String, android.view.View>) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.TOP
+        fun column(item: Pair<String, android.view.View>) = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(this@MainActivity).apply { text = item.first; textSize = 13f; setTextColor(0xFF5D646B.toInt()); setPadding(0, 0, 0, dp(2)) }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(item.second, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-
-        addView(column(left), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginEnd = dp(8)
-        })
-        addView(column(right), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginStart = dp(8)
-        })
+        addView(column(left), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
+        addView(column(right), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) })
     }
 
-    private fun section(root: LinearLayout, value: String) {
-        root.addView(TextView(this).apply {
-            text = value; textSize = 18f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 20, 0, 8)
-        }, lp())
-    }
+    private fun section(root: LinearLayout, value: String) { root.addView(TextView(this).apply { text = value; textSize = 18f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 20, 0, 8) }, lp()) }
 
     private fun button(t: String, action: () -> Unit) = Button(this).apply {
-        text = t
-        textSize = 15f
-        setTextColor(0xFFFFFFFF.toInt())
-        isAllCaps = false
-        typeface = android.graphics.Typeface.create("sans", android.graphics.Typeface.BOLD)
-        minHeight = dp(52)
-        setPadding(dp(20), 0, dp(20), 0)
-        background = GradientDrawable().apply {
-            setColor(0xFF172A3A.toInt())
-            cornerRadius = dp(18).toFloat()
-        }
-        elevation = dp(3).toFloat()
-        setOnClickListener { action() }
+        text = t; textSize = 15f; setTextColor(0xFFFFFFFF.toInt()); isAllCaps = false
+        typeface = android.graphics.Typeface.create("sans", android.graphics.Typeface.BOLD); minHeight = dp(52); setPadding(dp(20), 0, dp(20), 0)
+        background = GradientDrawable().apply { setColor(0xFF172A3A.toInt()); cornerRadius = dp(18).toFloat() }
+        elevation = dp(3).toFloat(); setOnClickListener { action() }
     }
 
-    private fun label(t: String) = TextView(this).apply {
-        text = t; textSize = 16f; setTextColor(0xFF5D646B.toInt()); setPadding(0, dp(6), 0, dp(6))
-    }
-
-    private fun lp() = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-        topMargin = dp(4); bottomMargin = dp(4)
-    }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+    private fun label(t: String) = TextView(this).apply { text = t; textSize = 16f; setTextColor(0xFF5D646B.toInt()); setPadding(0, dp(6), 0, dp(6)) }
+    private fun lp() = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4); bottomMargin = dp(4) }
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     private fun pickImage(code: Int) { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "image/*"; addCategory(Intent.CATEGORY_OPENABLE); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) }, code) }
-
-    private fun pickImages() {
-        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            type = "image/*"
-            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-            addCategory(Intent.CATEGORY_OPENABLE)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-        }, 100)
-    }
+    private fun pickImages() { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "image/*"; putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true); addCategory(Intent.CATEGORY_OPENABLE); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) }, 100) }
     private fun pickAudio() { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "audio/*"; addCategory(Intent.CATEGORY_OPENABLE); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) }, 102) }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK || data == null) return
+        super.onActivityResult(requestCode, resultCode, data); if (resultCode != RESULT_OK || data == null) return
         when (requestCode) {
             100 -> {
-                reelBitmaps.clear()
-                val uris = mutableListOf<Uri>()
-                data.clipData?.let { clip ->
-                    for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri)
-                } ?: data.data?.let { uris.add(it) }
-                uris.forEach { uri ->
-                    try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
-                    decodePortrait(uri)?.let { reelBitmaps.add(it) }
-                }
-                mainBitmap = reelBitmaps.firstOrNull()
-                preview.backgroundBitmap = mainBitmap
-                mainImageLabel.text = when (reelBitmaps.size) {
-                    0 -> "No images selected"
-                    1 -> "1 image selected"
-                    else -> "${reelBitmaps.size} images selected"
-                }
-                refreshPreview()
+                reelBitmaps.clear(); val uris = mutableListOf<Uri>()
+                data.clipData?.let { clip -> for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri) } ?: data.data?.let { uris.add(it) }
+                uris.forEach { uri -> try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; decodePortrait(uri)?.let { reelBitmaps.add(it) } }
+                mainBitmap = reelBitmaps.firstOrNull(); preview.backgroundBitmap = mainBitmap
+                mainImageLabel.text = when (reelBitmaps.size) { 0 -> "No images selected"; 1 -> "1 image selected"; else -> "${reelBitmaps.size} images selected" }
+                renderImageThumbnails(); refreshPreview()
             }
-            101 -> {
-                val uri = data.data ?: return
-                try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
-                ctaBitmap = decodePortrait(uri); preview.ctaBitmap = ctaBitmap; ctaImageLabel.text = "Outro selected"; preferences.edit().putString("cta_uri", uri.toString()).apply(); preview.invalidate()
-            }
-            102 -> {
-                val uri = data.data ?: return
-                try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
-                musicUri = uri; musicLabel.text = "Music selected"; preferences.edit().putString("music_uri", uri.toString()).apply()
-            }
+            101 -> { val uri = data.data ?: return; try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; ctaBitmap = decodePortrait(uri); preview.ctaBitmap = ctaBitmap; ctaImageLabel.text = "Outro selected"; preferences.edit().putString("cta_uri", uri.toString()).apply(); preview.invalidate() }
+            102 -> { val uri = data.data ?: return; try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; musicUri = uri; musicLabel.text = "Music selected"; preferences.edit().putString("music_uri", uri.toString()).apply() }
         }
     }
 
+    private fun renderImageThumbnails() {
+        imageStrip.removeAllViews()
+        val size = dp(58); val radius = dp(10).toFloat()
+        reelBitmaps.forEachIndexed { index, bitmap ->
+            val wrapper = FrameLayout(this).apply { background = GradientDrawable().apply { setColor(0xFF172A3A.toInt()); cornerRadius = radius }; setPadding(dp(2), dp(2), dp(2), dp(2)); elevation = dp(2).toFloat() }
+            val image = ImageView(this).apply { setImageBitmap(bitmap); scaleType = ImageView.ScaleType.CENTER_CROP; contentDescription = "Reel image ${index + 1}" }
+            wrapper.addView(image, FrameLayout.LayoutParams(-1, -1))
+            wrapper.setOnClickListener { showImagePreview(index) }
+            val params = LinearLayout.LayoutParams(size, size).apply { marginEnd = dp(8) }
+            imageStrip.addView(wrapper, params)
+        }
+    }
+
+    private fun showImagePreview(index: Int) {
+        val bitmap = reelBitmaps.getOrNull(index) ?: return
+        val dialog = android.app.Dialog(this)
+        val container = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
+        val image = ImageView(this).apply {
+            setImageBitmap(bitmap); scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            scaleX = 1.04f; scaleY = 1.04f
+            animate().scaleX(1f).scaleY(1f).setDuration(180).start()
+        }
+        container.addView(image, FrameLayout.LayoutParams(-1, -1))
+        container.setOnClickListener { dialog.dismiss() }
+        dialog.setContentView(container)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(-1, -1)
+        dialog.show()
+        dialog.window?.setLayout(-1, -1)
+    }
+
     private fun restorePersistentSelections() {
-        // Spinner values are restored before their listeners are attached so the
-        // saved preferences cannot be overwritten by the default UI selection.
         preferences.getString("cta_uri", null)?.let { restoreCta(Uri.parse(it)) }
         preferences.getString("music_uri", null)?.let { restoreMusic(Uri.parse(it)) }
     }
-
-    private fun restoreCta(uri: Uri) {
-        val bitmap = decodePortrait(uri) ?: return
-        ctaBitmap = bitmap; preview.ctaBitmap = bitmap; ctaImageLabel.text = "Outro selected"; preview.invalidate()
-    }
-
-    private fun restoreMusic(uri: Uri) {
-        try {
-            contentResolver.openInputStream(uri)?.close()
-            musicUri = uri; musicLabel.text = "Music selected"
-        } catch (_: Exception) { }
-    }
-
-    private fun simpleSelectionListener(onSelected: (Int) -> Unit) = object : android.widget.AdapterView.OnItemSelectedListener {
-        override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
-        override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) = onSelected(position)
-    }
-
+    private fun restoreCta(uri: Uri) { val bitmap = decodePortrait(uri) ?: return; ctaBitmap = bitmap; preview.ctaBitmap = bitmap; ctaImageLabel.text = "Outro selected"; preview.invalidate() }
+    private fun restoreMusic(uri: Uri) { try { contentResolver.openInputStream(uri)?.close(); musicUri = uri; musicLabel.text = "Music selected" } catch (_: Exception) {} }
+    private fun simpleSelectionListener(onSelected: (Int) -> Unit) = object : android.widget.AdapterView.OnItemSelectedListener { override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit; override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) = onSelected(position) }
     private fun decodePortrait(uri: Uri): Bitmap? {
         return try {
             val decoded = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } ?: return null
             val orientation = contentResolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) } ?: ExifInterface.ORIENTATION_NORMAL
-            val matrix = Matrix()
-            when (orientation) {
-                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
-                ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
-                ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.setScale(1f, -1f)
-                ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.setRotate(90f); matrix.postScale(-1f, 1f) }
-                ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
-                ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(-90f); matrix.postScale(-1f, 1f) }
-                ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
+            val matrix = Matrix(); when (orientation) {
+                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f); ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f); ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.setScale(1f, -1f)
+                ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.setRotate(90f); matrix.postScale(-1f, 1f) }; ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
+                ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(-90f); matrix.postScale(-1f, 1f) }; ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
             }
             val oriented = if (orientation == ExifInterface.ORIENTATION_NORMAL) decoded else Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also { if (it !== decoded) decoded.recycle() }
             centerCropPortrait(oriented)
         } catch (_: Exception) { null }
     }
+    private fun centerCropPortrait(source: Bitmap): Bitmap { val targetW=1080; val targetH=1920; val targetRatio=targetW.toFloat()/targetH; val sourceRatio=source.width.toFloat()/source.height; val cropW:Int; val cropH:Int; if(sourceRatio>targetRatio){cropH=source.height;cropW=(cropH*targetRatio).toInt()}else{cropW=source.width;cropH=(cropW/targetRatio).toInt()}; val left=(source.width-cropW)/2; val top=(source.height-cropH)/2; val cropped=Bitmap.createBitmap(source,left,top,cropW,cropH); val scaled=Bitmap.createScaledBitmap(cropped,targetW,targetH,true); if(cropped!==source)cropped.recycle();if(scaled!==source)source.recycle();return scaled }
+    private fun refreshPreview() { preview.title=titleInput.text.toString().trim().ifBlank { "Main heading" }; preview.headlines=headlineInputs.map{it.text.toString().trim()}; preview.invalidate() }
 
-    private fun centerCropPortrait(source: Bitmap): Bitmap {
-        val targetW = 1080; val targetH = 1920; val targetRatio = targetW.toFloat() / targetH; val sourceRatio = source.width.toFloat() / source.height
-        val cropW: Int; val cropH: Int
-        if (sourceRatio > targetRatio) { cropH = source.height; cropW = (cropH * targetRatio).toInt() } else { cropW = source.width; cropH = (cropW / targetRatio).toInt() }
-        val left = (source.width - cropW) / 2; val top = (source.height - cropH) / 2
-        val cropped = Bitmap.createBitmap(source, left, top, cropW, cropH); val scaled = Bitmap.createScaledBitmap(cropped, targetW, targetH, true)
-        if (cropped !== source) cropped.recycle(); if (scaled !== source) source.recycle(); return scaled
+    private fun testVoice() { if (!::voiceTts.isInitialized) return toast("Voice service is still loading"); val selected=selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition) ?: return toast("Select a Kokoro voice first"); val parts=mutableListOf<String>(); val heading=titleInput.text.toString().trim(); if(heading.isNotBlank())parts.add(heading); headlineInputs.map{it.text.toString().trim()}.filter{it.isNotBlank()}.forEach{parts.add(it)}; val speechText=parts.joinToString(". "); if(speechText.isBlank())return toast("Enter a heading or subheading first"); toast("Generating and playing voice..."); val output=File(cacheDir,"daily_flare_voice.wav"); val selectedSpeed=voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition){1.0f}; voiceTts.speakToFile(speechText,selected,output,selectedSpeed){ok,duration->runOnUiThread{if(!ok)toast("Voice generation failed")else{playVoiceFile(output);toast("Playing Kokoro voice at ${selectedSpeed}×: ${duration} ms")}}} }
+    private fun getAudioDurationMs(file: File): Long { val retriever=MediaMetadataRetriever(); return try{retriever.setDataSource(file.absolutePath);retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?:0L}catch(_:Exception){0L}finally{try{retriever.release()}catch(_:Exception){}} }
+    private fun playVoiceFile(file: File){try{voicePlayer?.release();voicePlayer=MediaPlayer().apply{setDataSource(file.absolutePath);setOnCompletionListener{it.release();voicePlayer=null};prepare();start()}}catch(_:Exception){toast("Voice was generated but could not be played")}}
+    private fun exportReel(){
+        val backgrounds=reelBitmaps.ifEmpty{listOfNotNull(mainBitmap)}; if(backgrounds.isEmpty())return toast("Choose at least one image"); val cta=ctaBitmap?:return toast("Choose the outro image"); val music=musicUri?:return toast("Choose music")
+        val title=titleInput.text.toString().trim().ifBlank{"Main heading"}; val headlines=headlineInputs.map{it.text.toString().trim()}; exportStatus.text="Preparing export...";exportProgress.progress=0;toast("Starting export")
+        thread(name="daily-flare-export"){try{val video=File(cacheDir,"daily_flare_video.mp4");val voice=File(cacheDir,"daily_flare_export_voice.wav");val ctaVoice=File(cacheDir,"daily_flare_cta_voice.wav");val audio=File(cacheDir,"daily_flare_mixed_audio_aac.mp4");val output=File(cacheDir,"daily_flare_reel_18s.mp4");video.delete();voice.delete();ctaVoice.delete();audio.delete();output.delete(); val speechParts=mutableListOf<String>();if(title.isNotBlank())speechParts.add(title);headlines.filter{it.isNotBlank()}.forEach{speechParts.add(it)};val speechText=speechParts.joinToString(". ");if(speechText.isBlank())throw IllegalStateException("Enter a heading or subheading for the voice");val selectedVoiceOption=this@MainActivity.selectedVoice?:voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?:throw IllegalStateException("Select a Kokoro voice first");val voiceLatch=CountDownLatch(1);var voiceOk=false;if(!::voiceTts.isInitialized)throw IllegalStateException("Kokoro voice service is not ready");val selectedSpeed=voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition){1.0f};voiceTts.speakToFile(speechText,selectedVoiceOption,voice,selectedSpeed){ok,_->voiceOk=ok;voiceLatch.countDown()};if(!voiceLatch.await(60,TimeUnit.SECONDS)||!voiceOk||!voice.exists()||voice.length()==0L)throw IllegalStateException("Kokoro voice generation failed");val voiceDurationMs=getAudioDurationMs(voice);runOnUiThread{exportProgress.progress=8;exportStatus.text="Measuring narration timing..."};val timingTexts=listOf(title)+headlines;val timingDurationsMs=MutableList(timingTexts.size){0L};timingTexts.forEachIndexed{index,timingText->if(timingText.isBlank())return@forEachIndexed;val timingFile=File(cacheDir,"daily_flare_timing_$index.wav");timingFile.delete();val timingLatch=CountDownLatch(1);var timingOk=false;voiceTts.speakToFile(timingText,selectedVoiceOption,timingFile,selectedSpeed){ok,_->timingOk=ok;timingLatch.countDown()};if(!timingLatch.await(60,TimeUnit.SECONDS)||!timingOk||!timingFile.exists()||timingFile.length()==0L)throw IllegalStateException("Kokoro timing measurement failed");timingDurationsMs[index]=getAudioDurationMs(timingFile);timingFile.delete();runOnUiThread{exportProgress.progress=8+(((index+1)*12)/timingTexts.size.coerceAtLeast(1));exportStatus.text="Measuring narration timing... ${index+1}/${timingTexts.size}"}};val totalMeasuredSpeechMs=timingDurationsMs.sum().coerceAtLeast(1L);val measuredTitleSpeechMs=((timingDurationsMs.firstOrNull()?:0L).toDouble()*voiceDurationMs.toDouble()/totalMeasuredSpeechMs.toDouble()).toLong();val measuredHeadlineDurationsMs=headlines.indices.map{index->timingDurationsMs.getOrElse(index+1){0L}};ReelEncoder(this).encode(backgrounds,cta,title,headlines,voiceDurationMs,measuredTitleSpeechMs,measuredHeadlineDurationsMs,video,object:ReelEncoder.Drain{override fun onFrame(frame:Int,total:Int){val percent=20+((frame*60L)/total.coerceAtLeast(1)).toInt();runOnUiThread{exportProgress.progress=percent;exportStatus.text="Rendering video... $percent%"}}});if(!video.exists()||video.length()==0L)throw IllegalStateException("Video rendering produced no output");runOnUiThread{exportProgress.progress=82;exportStatus.text="Generating CTA voice..."};val ctaLatch=CountDownLatch(1);var ctaOk=false;voiceTts.speakToFile("FOLLOW THE DAILY FLARE ON SOCIAL MEDIA.",selectedVoiceOption,ctaVoice,selectedSpeed){ok,_->ctaOk=ok;ctaLatch.countDown()};if(!ctaLatch.await(30,TimeUnit.SECONDS)||!ctaOk||!ctaVoice.exists()||ctaVoice.length()==0L)throw IllegalStateException("CTA voice generation failed");runOnUiThread{exportProgress.progress=88;exportStatus.text="Mixing voice and music..."};if(!AudioTranscoder(this).transcodeMixed(music,voice,audio,ctaVoice,musicIntensities.getOrElse(musicIntensitySpinner.selectedItemPosition){10}/100f)||!audio.exists()||audio.length()==0L)throw IllegalStateException("Voice and music could not be mixed");runOnUiThread{exportProgress.progress=95;exportStatus.text="Finalizing video..."};if(!AudioMuxer().mux(video,audio,output)||!output.exists()||output.length()==0L)throw IllegalStateException("Audio/video muxing failed");val saved=saveToGallery(output);runOnUiThread{exportProgress.progress=100;exportStatus.text=if(saved)"Export complete ✓"else"Export completed but could not save to gallery";toast(if(saved)"Export complete: saved to Movies/Daily Flare Reel"else"Export completed but could not save to gallery")}}catch(e:Exception){runOnUiThread{toast("Export failed: ${e.message?:"unknown error"}")}}}
     }
-
-    private fun refreshPreview() {
-        // Normal preview is the exact same renderer used by export.
-        preview.title = titleInput.text.toString().trim().ifBlank { "Main heading" }
-        preview.headlines = headlineInputs.map { it.text.toString().trim() }
-        preview.invalidate()
-    }
-
-    private fun testVoice() {
-        if (!::voiceTts.isInitialized) return toast("Voice service is still loading")
-        val selected = selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)
-            ?: return toast("Select a Kokoro voice first")
-        val parts = mutableListOf<String>()
-        val heading = titleInput.text.toString().trim()
-        if (heading.isNotBlank()) parts.add(heading)
-        headlineInputs.map { it.text.toString().trim() }.filter { it.isNotBlank() }.forEach { parts.add(it) }
-        val speechText = parts.joinToString(". ")
-        if (speechText.isBlank()) return toast("Enter a heading or subheading first")
-        toast("Generating and playing voice...")
-        val output = File(cacheDir, "daily_flare_voice.wav")
-        val selectedSpeed = voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition) { 1.0f }
-        voiceTts.speakToFile(speechText, selected, output, selectedSpeed) { ok, duration ->
-            runOnUiThread {
-                if (!ok) {
-                    toast("Voice generation failed")
-                } else {
-                    playVoiceFile(output)
-                    toast("Playing Kokoro voice at " + selectedSpeed + "×: " + duration + " ms")
-                }
-            }
-        }
-    }
-
-    private fun getAudioDurationMs(file: File): Long {
-        val retriever = MediaMetadataRetriever()
-        return try {
-            retriever.setDataSource(file.absolutePath)
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-        } catch (_: Exception) {
-            0L
-        } finally {
-            try { retriever.release() } catch (_: Exception) { }
-        }
-    }
-
-    private fun playVoiceFile(file: File) {
-        try {
-            voicePlayer?.release()
-            voicePlayer = MediaPlayer().apply {
-                setDataSource(file.absolutePath)
-                setOnCompletionListener { it.release(); voicePlayer = null }
-                prepare()
-                start()
-            }
-        } catch (_: Exception) {
-            toast("Voice was generated but could not be played")
-        }
-    }
-
-    private fun openVoiceSettings() {
-        try {
-            startActivity(Intent("com.android.settings.TTS_SETTINGS"))
-        } catch (_: Exception) {
-            toast("Android TTS settings are unavailable on this phone")
-        }
-    }
-
-    private fun exportReel() {
-        val backgrounds = reelBitmaps.ifEmpty { listOfNotNull(mainBitmap) }
-        if (backgrounds.isEmpty()) return toast("Choose at least one image")
-        val cta = ctaBitmap ?: return toast("Choose the outro image")
-        val music = musicUri ?: return toast("Choose music")
-        val title = titleInput.text.toString().trim().ifBlank { "Main heading" }
-        val headlines = headlineInputs.map { it.text.toString().trim() }
-        exportStatus.text = "Preparing export..."; exportProgress.progress = 0; toast("Starting export")
-        thread(name = "daily-flare-export") {
-            try {
-                val video = File(cacheDir, "daily_flare_video.mp4")
-                val voice = File(cacheDir, "daily_flare_export_voice.wav")
-                val ctaVoice = File(cacheDir, "daily_flare_cta_voice.wav")
-                val audio = File(cacheDir, "daily_flare_mixed_audio_aac.mp4")
-                val output = File(cacheDir, "daily_flare_reel_18s.mp4")
-                video.delete(); voice.delete(); ctaVoice.delete(); audio.delete(); output.delete()
-
-                val speechParts = mutableListOf<String>()
-                if (title.isNotBlank()) speechParts.add(title)
-                headlines.filter { it.isNotBlank() }.forEach { speechParts.add(it) }
-                val speechText = speechParts.joinToString(". ")
-                if (speechText.isBlank()) throw IllegalStateException("Enter a heading or subheading for the voice")
-
-                val selectedVoiceOption = this@MainActivity.selectedVoice
-                    ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)
-                    ?: throw IllegalStateException("Select a Kokoro voice first")
-                val voiceLatch = CountDownLatch(1)
-                var voiceOk = false
-                if (!::voiceTts.isInitialized) throw IllegalStateException("Kokoro voice service is not ready")
-                val selectedSpeed = voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition) { 1.0f }
-                voiceTts.speakToFile(speechText, selectedVoiceOption, voice, selectedSpeed) { ok, _ ->
-                    voiceOk = ok
-                    voiceLatch.countDown()
-                }
-                if (!voiceLatch.await(60, TimeUnit.SECONDS) || !voiceOk || !voice.exists() || voice.length() == 0L) {
-                    throw IllegalStateException("Kokoro voice generation failed")
-                }
-
-                val voiceDurationMs = getAudioDurationMs(voice)
-
-                // Kokoro does not expose word timestamps. Measure the title and every
-                // subheading with the exact selected voice and speed, then use those
-                // real durations only for the visual timeline. The final narration
-                // remains the original single continuous Kokoro render.
-                runOnUiThread { exportProgress.progress = 8; exportStatus.text = "Measuring narration timing..." }
-                val timingTexts = listOf(title) + headlines
-                val timingDurationsMs = MutableList(timingTexts.size) { 0L }
-
-                timingTexts.forEachIndexed { index, timingText ->
-                    if (timingText.isBlank()) return@forEachIndexed
-                    val timingFile = File(cacheDir, "daily_flare_timing_$index.wav")
-                    timingFile.delete()
-                    val timingLatch = CountDownLatch(1)
-                    var timingOk = false
-                    voiceTts.speakToFile(timingText, selectedVoiceOption, timingFile, selectedSpeed) { ok, _ ->
-                        timingOk = ok
-                        timingLatch.countDown()
-                    }
-                    if (!timingLatch.await(60, TimeUnit.SECONDS) || !timingOk || !timingFile.exists() || timingFile.length() == 0L) {
-                        throw IllegalStateException("Kokoro timing measurement failed")
-                    }
-                    timingDurationsMs[index] = getAudioDurationMs(timingFile)
-                    timingFile.delete()
-                    val timingPercent = 8 + (((index + 1) * 12) / timingTexts.size.coerceAtLeast(1))
-                    runOnUiThread {
-                        exportProgress.progress = timingPercent
-                        exportStatus.text = "Measuring narration timing... ${index + 1}/${timingTexts.size}"
-                    }
-                }
-
-                // Isolated clips can contain slightly different edge silence from
-                // the continuous narration. Keep their relative timing, but scale the
-                // complete measured timeline to the actual final narration duration.
-                val totalMeasuredSpeechMs = timingDurationsMs.sum().coerceAtLeast(1L)
-                val measuredTitleSpeechMs = ((timingDurationsMs.firstOrNull() ?: 0L).toDouble()
-                    * voiceDurationMs.toDouble() / totalMeasuredSpeechMs.toDouble()).toLong()
-                val measuredHeadlineDurationsMs = headlines.indices.map { index ->
-                    timingDurationsMs.getOrElse(index + 1) { 0L }
-                }
-
-                ReelEncoder(this).encode(
-                    backgrounds,
-                    cta,
-                    title,
-                    headlines,
-                    voiceDurationMs,
-                    measuredTitleSpeechMs,
-                    measuredHeadlineDurationsMs,
-                    video,
-                    object : ReelEncoder.Drain {
-                    override fun onFrame(frame: Int, total: Int) {
-                        val percent = 20 + ((frame * 60L) / total.coerceAtLeast(1)).toInt()
-                        runOnUiThread { exportProgress.progress = percent; exportStatus.text = "Rendering video... $percent%" }
-                    }
-                })
-                if (!video.exists() || video.length() == 0L) throw IllegalStateException("Video rendering produced no output")
-                runOnUiThread { exportProgress.progress = 82; exportStatus.text = "Generating CTA voice..." }
-                val ctaLatch = CountDownLatch(1)
-                var ctaOk = false
-                voiceTts.speakToFile("FOLLOW THE DAILY FLARE ON SOCIAL MEDIA.", selectedVoiceOption, ctaVoice, selectedSpeed) { ok, _ -> ctaOk = ok; ctaLatch.countDown() }
-                if (!ctaLatch.await(30, TimeUnit.SECONDS) || !ctaOk || !ctaVoice.exists() || ctaVoice.length() == 0L) throw IllegalStateException("CTA voice generation failed")
-                runOnUiThread { exportProgress.progress = 88; exportStatus.text = "Mixing voice and music..." }
-                if (!AudioTranscoder(this).transcodeMixed(music, voice, audio, ctaVoice, musicIntensities.getOrElse(musicIntensitySpinner.selectedItemPosition) { 10 } / 100f) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Voice and music could not be mixed")
-                runOnUiThread { exportProgress.progress = 95; exportStatus.text = "Finalizing video..." }
-                if (!AudioMuxer().mux(video, audio, output) || !output.exists() || output.length() == 0L) throw IllegalStateException("Audio/video muxing failed")
-                val saved = saveToGallery(output)
-                runOnUiThread { exportProgress.progress = 100; exportStatus.text = if (saved) "Export complete ✓" else "Export completed but could not save to gallery"; toast(if (saved) "Export complete: saved to Movies/Daily Flare Reel" else "Export completed but could not save to gallery") }
-            } catch (e: Exception) { runOnUiThread { toast("Export failed: ${e.message ?: "unknown error"}") } }
-        }
-    }
-
-    private fun saveToGallery(source: File): Boolean {
-        if (!source.exists() || source.length() == 0L) return false
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val values = ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, "daily_flare_reel_${System.currentTimeMillis()}.mp4")
-                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/Daily Flare Reel")
-                    put(MediaStore.Video.Media.IS_PENDING, 1)
-                }
-                val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return false
-                try {
-                    contentResolver.openOutputStream(uri)?.use { out -> source.inputStream().use { input -> input.copyTo(out) } } ?: return false
-                    values.clear(); values.put(MediaStore.Video.Media.IS_PENDING, 0); contentResolver.update(uri, values, null, null) > 0
-                } catch (_: Exception) { contentResolver.delete(uri, null, null); false }
-            } else {
-                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "Daily Flare Reel").apply { mkdirs() }
-                val destination = File(dir, "daily_flare_reel_${System.currentTimeMillis()}.mp4"); source.copyTo(destination, overwrite = true)
-                sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(destination))); destination.exists() && destination.length() > 0L
-            }
-        } catch (_: Exception) { false }
-    }
-
-    override fun onDestroy() {
-        voicePlayer?.release()
-        voicePlayer = null
-        if (::voiceTts.isInitialized) voiceTts.shutdown()
-        super.onDestroy()
-    }
-
-    private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    private fun saveToGallery(source:File):Boolean{if(!source.exists()||source.length()==0L)return false;return try{if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q){val values=ContentValues().apply{put(MediaStore.Video.Media.DISPLAY_NAME,"daily_flare_reel_${System.currentTimeMillis()}.mp4");put(MediaStore.Video.Media.MIME_TYPE,"video/mp4");put(MediaStore.Video.Media.RELATIVE_PATH,Environment.DIRECTORY_MOVIES+"/Daily Flare Reel");put(MediaStore.Video.Media.IS_PENDING,1)};val uri=contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,values)?:return false;try{contentResolver.openOutputStream(uri)?.use{out->source.inputStream().use{input->input.copyTo(out)}}?:return false;values.clear();values.put(MediaStore.Video.Media.IS_PENDING,0);contentResolver.update(uri,values,null,null)>0}catch(_:Exception){contentResolver.delete(uri,null,null);false}}else{val dir=File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),"Daily Flare Reel").apply{mkdirs()};val destination=File(dir,"daily_flare_reel_${System.currentTimeMillis()}.mp4");source.copyTo(destination,overwrite=true);sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE,Uri.fromFile(destination)));destination.exists()&&destination.length()>0L}}catch(_:Exception){false}}
+    override fun onDestroy(){voicePlayer?.release();voicePlayer=null;if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
+    private fun toast(message:String)=Toast.makeText(this,message,Toast.LENGTH_LONG).show()
 }
