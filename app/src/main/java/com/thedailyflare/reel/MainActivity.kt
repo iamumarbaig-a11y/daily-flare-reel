@@ -334,11 +334,14 @@ class MainActivity : Activity() {
             if (options.isNotEmpty()) { voiceSpinner.setSelection(restoredIndex, false); selectedVoice = options[restoredIndex] } else selectedVoice = null
             voiceStatus.text = "Kokoro is ready locally — ${options.size} voices available"
             openPkgButton.visibility = android.view.View.GONE
+            // Once Kokoro is installed, hide the setup message as well.
+            voiceStatus.visibility = android.view.View.GONE
             scheduleBackgroundVoicePreview()
         } }, { error -> runOnUiThread {
             voiceOptions = emptyList(); selectedVoice = null
             voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, emptyList<String>())
             voiceStatus.text = error
+            voiceStatus.visibility = android.view.View.VISIBLE
             openPkgButton.visibility = android.view.View.VISIBLE
         } })
     }
