@@ -38,7 +38,7 @@ class ReelEncoder(private val context: Context) {
         drain: Drain? = null
     ) {
         output.delete()
-        val width = 1080; val height = 1920; val fps = 24
+        val width = 1080; val height = 1920; val fps = 60
         // Keep the visual narration section aligned to the exact audio timeline.
         // The previous whole-second rounding could delay the outro image by almost one second.
         val mainFrames = kotlin.math.ceil(voiceDurationMs.coerceAtLeast(1L).toDouble() * fps.toDouble() / 1000.0).toInt().coerceAtLeast(1)
@@ -68,15 +68,15 @@ class ReelEncoder(private val context: Context) {
         }
         val codec = MediaCodec.createEncoderByType("video/avc"); val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         var surface: Surface? = null; var track = -1; var started = false; val info = MediaCodec.BufferInfo()
-        val frameIntervalNs = 1_000_000_000L / fps; var nextFrameNs = System.nanoTime()
-        // Reuse animation buffers. Allocating two full-HD bitmaps every frame caused
-        // GC/render stalls and stretched the encoded video timeline beyond the narration.
+        // Render at 60 FPS with deterministic frame submission pacing. Rendering speed
+        // must not create additional visual frames or change the planned frame count.
+        // Each exported frame remains exactly one position in the fixed 60 FPS timeline.
+        // Reuse animation buffers to avoid per-frame allocations.
         val animatedLayer = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val settledMask = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         try {
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); surface = codec.createInputSurface(); codec.start()
             for (frame in 0 until totalFrames) {
-                val waitNs = nextFrameNs - System.nanoTime(); if (waitNs > 0L) Thread.sleep(waitNs / 1_000_000L, (waitNs % 1_000_000L).toInt()); nextFrameNs += frameIntervalNs
                 val canvas = surface.lockCanvas(null)
                 try {
                     if (frame < mainFrames) {
