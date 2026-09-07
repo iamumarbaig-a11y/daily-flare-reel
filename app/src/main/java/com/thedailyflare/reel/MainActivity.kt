@@ -57,6 +57,7 @@ class MainActivity : Activity() {
     private lateinit var exportStatus: TextView
     private lateinit var exportProgress: ProgressBar
     private var voicePlayer: MediaPlayer? = null
+    private var ctaPreviewPlayer: MediaPlayer? = null
     private val voicePreviewHandler = Handler(Looper.getMainLooper())
     private var voicePreviewGenerationVersion = 0
     private var cachedVoiceDurationMs = 0L
@@ -465,30 +466,66 @@ class MainActivity : Activity() {
         preview.post(visualPreviewTick)
     }
 
+    // Preview playback never calls Kokoro. It only plays narration that is already cached.
     private fun startCachedVoicePreview(startProgress: Int) {
         if (!cachedVoiceReady || !cachedVoiceFile.exists() || cachedVoiceDurationMs <= 0L) return
+        stopPreviewAudio()
         try {
-            voicePlayer?.release()
             val total = visualPreviewDurationMs()
-            val offsetMs = (total * startProgress.coerceIn(0, 100) / 100L).coerceIn(0L, (cachedVoiceDurationMs - 1L).coerceAtLeast(0L))
-            voicePlayer = MediaPlayer().apply {
-                setDataSource(cachedVoiceFile.absolutePath)
-                prepare()
-                if (offsetMs > 0L) seekTo(offsetMs.toInt())
-                start()
-                setOnCompletionListener { it.release(); voicePlayer = null }
+            val timelineOffsetMs = total * startProgress.coerceIn(0, 100) / 100L
+            if (timelineOffsetMs < cachedVoiceDurationMs) {
+                playCachedPreviewFile(cachedVoiceFile, timelineOffsetMs) {
+                    if (visualPreviewPlaying) startCachedCtaPreview(0L)
+                }
+            } else {
+                startCachedCtaPreview(timelineOffsetMs - cachedVoiceDurationMs)
             }
         } catch (_: Exception) {
-            try { voicePlayer?.release() } catch (_: Exception) {}
-            voicePlayer = null
+            stopPreviewAudio()
         }
+    }
+
+    private fun startCachedCtaPreview(offsetMs: Long) {
+        if (!cachedCtaReady || !cachedCtaVoiceFile.exists() || cachedCtaVoiceFile.length() <= 0L) return
+        try {
+            ctaPreviewPlayer = MediaPlayer().apply {
+                setDataSource(cachedCtaVoiceFile.absolutePath)
+                prepare()
+                if (offsetMs > 0L) seekTo(offsetMs.coerceIn(0L, (duration - 1).coerceAtLeast(0).toLong()).toInt())
+                setOnCompletionListener { it.release(); ctaPreviewPlayer = null }
+                start()
+            }
+        } catch (_: Exception) {
+            try { ctaPreviewPlayer?.release() } catch (_: Exception) {}
+            ctaPreviewPlayer = null
+        }
+    }
+
+    private fun playCachedPreviewFile(file: File, offsetMs: Long, onComplete: () -> Unit) {
+        voicePlayer = MediaPlayer().apply {
+            setDataSource(file.absolutePath)
+            prepare()
+            if (offsetMs > 0L) seekTo(offsetMs.coerceIn(0L, (duration - 1).coerceAtLeast(0).toLong()).toInt())
+            setOnCompletionListener { player ->
+                player.release()
+                voicePlayer = null
+                onComplete()
+            }
+            start()
+        }
+    }
+
+    private fun stopPreviewAudio() {
+        try { voicePlayer?.stop(); voicePlayer?.release() } catch (_: Exception) {}
+        try { ctaPreviewPlayer?.stop(); ctaPreviewPlayer?.release() } catch (_: Exception) {}
+        voicePlayer = null
+        ctaPreviewPlayer = null
     }
 
     private fun stopVisualPreview(resetIcon: Boolean) {
         visualPreviewPlaying = false
         if (::preview.isInitialized) preview.removeCallbacks(visualPreviewTick)
-        try { voicePlayer?.stop(); voicePlayer?.release() } catch (_: Exception) {}
-        voicePlayer = null
+        stopPreviewAudio()
         if (resetIcon && ::visualPreviewPlayButton.isInitialized) visualPreviewPlayButton.text = "▶"
     }
 
@@ -497,7 +534,8 @@ class MainActivity : Activity() {
     private fun visualPreviewDurationMs(): Long {
         val bodyWords = ReelLayout.bodyWordCount(headlineInputs.map { it.text.toString() })
         val narration = if (cachedVoiceReady && cachedVoiceDurationMs > 0L) cachedVoiceDurationMs else (3500L + bodyWords * 140L).coerceIn(3500L, 18000L)
-        return narration + 3000L
+        val outro = if (cachedCtaReady && cachedCtaVoiceFile.exists()) getAudioDurationMs(cachedCtaVoiceFile).takeIf { it > 0L } ?: 3000L else 3000L
+        return narration + outro
     }
 
     private fun updateVisualPreview(progress: Float) {
