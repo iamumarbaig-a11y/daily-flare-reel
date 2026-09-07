@@ -52,6 +52,7 @@ class MainActivity : Activity() {
     private val voiceSpeeds = listOf(0.75f, 0.9f, 1.0f, 1.1f, 1.25f, 1.5f)
     private lateinit var voiceStatus: TextView
     private lateinit var openPkgButton: Button
+    private lateinit var testButton: Button
     private lateinit var exportStatus: TextView
     private lateinit var exportProgress: ProgressBar
     private var voicePlayer: MediaPlayer? = null
@@ -186,7 +187,7 @@ class MainActivity : Activity() {
             }
         }
         refreshKokoroState()
-        val testButton = button("TEST") { testVoice() }
+        testButton = button("TEST") { testVoice() }
         openPkgButton = button("OPEN PKG") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }
         root.addView(twoColumnRow("" to testButton, "" to openPkgButton), lp())
         section(root, "4. MUSIC")
@@ -334,7 +335,8 @@ class MainActivity : Activity() {
             if (options.isNotEmpty()) { voiceSpinner.setSelection(restoredIndex, false); selectedVoice = options[restoredIndex] } else selectedVoice = null
             voiceStatus.text = "Kokoro is ready locally — ${options.size} voices available"
             openPkgButton.visibility = android.view.View.GONE
-            // Once Kokoro is installed, hide the setup message as well.
+            testButton.visibility = android.view.View.GONE
+            // Once Kokoro is installed, hide the setup controls and message as well.
             voiceStatus.visibility = android.view.View.GONE
             scheduleBackgroundVoicePreview()
         } }, { error -> runOnUiThread {
@@ -343,6 +345,7 @@ class MainActivity : Activity() {
             voiceStatus.text = error
             voiceStatus.visibility = android.view.View.VISIBLE
             openPkgButton.visibility = android.view.View.VISIBLE
+            testButton.visibility = android.view.View.VISIBLE
         } })
     }
 
