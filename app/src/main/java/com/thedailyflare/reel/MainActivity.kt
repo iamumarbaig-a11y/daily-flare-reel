@@ -51,6 +51,7 @@ class MainActivity : Activity() {
     private lateinit var voiceTts: VoiceTts
     private val voiceSpeeds = listOf(0.75f, 0.9f, 1.0f, 1.1f, 1.25f, 1.5f)
     private lateinit var voiceStatus: TextView
+    private lateinit var kokoroSetupRow: LinearLayout
     private lateinit var openPkgButton: Button
     private lateinit var testButton: Button
     private lateinit var exportStatus: TextView
@@ -150,7 +151,7 @@ class MainActivity : Activity() {
         })
         previewControls.addView(visualPreviewSlider, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         visualPreviewPlayButton = button("▶") { toggleVisualPreview() }.apply {
-            contentDescription = "Play silent visual preview"
+            contentDescription = "Play visual preview with cached narration when available"
             minHeight = dp(48)
             minWidth = dp(58)
         }
@@ -189,7 +190,8 @@ class MainActivity : Activity() {
         refreshKokoroState()
         testButton = button("TEST") { testVoice() }
         openPkgButton = button("OPEN PKG") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }
-        root.addView(twoColumnRow("" to testButton, "" to openPkgButton), lp())
+        kokoroSetupRow = twoColumnRow("" to testButton, "" to openPkgButton)
+        root.addView(kokoroSetupRow, lp())
         section(root, "4. MUSIC")
         musicIntensitySpinner = Spinner(this)
         musicIntensitySpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, musicIntensities.map { "$it%" })
@@ -336,6 +338,7 @@ class MainActivity : Activity() {
             voiceStatus.text = "Kokoro is ready locally — ${options.size} voices available"
             openPkgButton.visibility = android.view.View.GONE
             testButton.visibility = android.view.View.GONE
+            kokoroSetupRow.visibility = android.view.View.GONE
             // Once Kokoro is installed, hide the setup controls and message as well.
             voiceStatus.visibility = android.view.View.GONE
             scheduleBackgroundVoicePreview()
@@ -346,6 +349,7 @@ class MainActivity : Activity() {
             voiceStatus.visibility = android.view.View.VISIBLE
             openPkgButton.visibility = android.view.View.VISIBLE
             testButton.visibility = android.view.View.VISIBLE
+            kokoroSetupRow.visibility = android.view.View.VISIBLE
         } })
     }
 
@@ -456,17 +460,39 @@ class MainActivity : Activity() {
         visualPreviewStartedAtMs = SystemClock.elapsedRealtime()
         visualPreviewPlaying = true
         visualPreviewPlayButton.text = "⏸"
+        startCachedVoicePreview(visualPreviewStartProgress)
         preview.removeCallbacks(visualPreviewTick)
         preview.post(visualPreviewTick)
+    }
+
+    private fun startCachedVoicePreview(startProgress: Int) {
+        if (!cachedVoiceReady || !cachedVoiceFile.exists() || cachedVoiceDurationMs <= 0L) return
+        try {
+            voicePlayer?.release()
+            val total = visualPreviewDurationMs()
+            val offsetMs = (total * startProgress.coerceIn(0, 100) / 100L).coerceIn(0L, (cachedVoiceDurationMs - 1L).coerceAtLeast(0L))
+            voicePlayer = MediaPlayer().apply {
+                setDataSource(cachedVoiceFile.absolutePath)
+                prepare()
+                if (offsetMs > 0L) seekTo(offsetMs.toInt())
+                start()
+                setOnCompletionListener { it.release(); voicePlayer = null }
+            }
+        } catch (_: Exception) {
+            try { voicePlayer?.release() } catch (_: Exception) {}
+            voicePlayer = null
+        }
     }
 
     private fun stopVisualPreview(resetIcon: Boolean) {
         visualPreviewPlaying = false
         if (::preview.isInitialized) preview.removeCallbacks(visualPreviewTick)
+        try { voicePlayer?.stop(); voicePlayer?.release() } catch (_: Exception) {}
+        voicePlayer = null
         if (resetIcon && ::visualPreviewPlayButton.isInitialized) visualPreviewPlayButton.text = "▶"
     }
 
-    // Silent visual playback stays independent from Kokoro. The duration scales with
+    // Visual playback uses cached narration when available; Kokoro is never invoked from preview. The duration scales with
     // the amount of text so longer reels do not race through the preview.
     private fun visualPreviewDurationMs(): Long {
         val bodyWords = ReelLayout.bodyWordCount(headlineInputs.map { it.text.toString() })
