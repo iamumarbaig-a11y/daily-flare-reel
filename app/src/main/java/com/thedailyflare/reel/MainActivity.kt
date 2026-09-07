@@ -164,16 +164,17 @@ class MainActivity : Activity() {
         imageStrip = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         root.addView(imageStrip, lp())
         ctaImageLabel = label("No outro selected"); root.addView(ctaImageLabel, lp())
-        root.addView(titleInput, lp())
-        headlineInputs.forEach { root.addView(it, lp()) }
         section(root, "3. KOKORO AI VOICE")
-        voiceStatus = label("Checking local Kokoro package..."); root.addView(voiceStatus, lp())
+        voiceStatus = label("Checking local Kokoro package...")
         voiceSpinner = Spinner(this); speedSpinner = Spinner(this)
         speedSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceSpeeds.map { "${it}×" })
         val savedSpeed = preferences.getFloat("voice_speed", 1.0f)
         speedSpinner.setSelection(voiceSpeeds.indexOf(savedSpeed).takeIf { it >= 0 } ?: 2, false)
         speedSpinner.onItemSelectedListener = simpleSelectionListener { position -> preferences.edit().putFloat("voice_speed", voiceSpeeds.getOrElse(position) { 1.0f }).apply(); scheduleBackgroundVoicePreview() }
         root.addView(twoColumnRow("VOICE" to voiceSpinner, "SPEED" to speedSpinner), lp())
+        root.addView(voiceStatus, lp())
+        root.addView(titleInput, lp())
+        headlineInputs.forEach { root.addView(it, lp()) }
         voiceTts = VoiceTts(this)
         voiceSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) { selectedVoice = null }
