@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
@@ -40,7 +41,7 @@ object ReelLayout {
         } else {
             val cropHeight = (bitmap.width / targetRatio).toInt().coerceAtLeast(1)
             val top = ((bitmap.height - cropHeight) / 2).coerceAtLeast(0)
-            Rect(0, top, (top + cropHeight).coerceAtMost(bitmap.height), bitmap.width)
+            Rect(0, top, bitmap.width, (top + cropHeight).coerceAtMost(bitmap.height))
         }
         canvas.drawBitmap(bitmap, src, Rect(0, 0, width, height), null)
     }
@@ -93,18 +94,7 @@ object ReelLayout {
         val titleMaxWidth = RIGHT - LEFT - (TITLE_PAD_X * 2f)
         val titleLines = wrap(title.ifBlank { "Main heading" }, titlePaint, titleMaxWidth)
         val titleLineHeight = titlePaint.textSize + 2f
-        drawConnectedTextBlock(
-            canvas = canvas,
-            lines = titleLines,
-            startY = y,
-            paint = titlePaint,
-            bgPaint = white,
-            maxWidth = RIGHT - LEFT,
-            padX = TITLE_PAD_X,
-            padY = TITLE_PAD_Y,
-            radius = TITLE_RADIUS,
-            lineHeight = titleLineHeight
-        ) { used -> y += used + GAP }
+        y += drawConnectedTextBlock(canvas, titleLines, y, titlePaint, white, RIGHT - LEFT, TITLE_PAD_X, TITLE_PAD_Y, TITLE_RADIUS, titleLineHeight) + GAP
 
         y += 16f
 
@@ -121,19 +111,7 @@ object ReelLayout {
             remainingWords -= take
             val lines = wrap(visibleText, textPaint, maxTextWidth)
 
-            drawConnectedTextBlock(
-                canvas = canvas,
-                lines = lines,
-                startY = y,
-                paint = textPaint,
-                bgPaint = white,
-                maxWidth = RIGHT - LEFT,
-                padX = TEXT_PAD_X,
-                padY = TEXT_PAD_Y,
-                radius = TEXT_RADIUS,
-                lineHeight = lineHeight
-            ) { used -> y += used + GAP }
-
+            y += drawConnectedTextBlock(canvas, lines, y, textPaint, white, RIGHT - LEFT, TEXT_PAD_X, TEXT_PAD_Y, TEXT_RADIUS, lineHeight) + GAP
             if (y > H - 80f) return
         }
     }
@@ -148,56 +126,43 @@ object ReelLayout {
         padX: Float,
         padY: Float,
         radius: Float,
-        lineHeight: Float,
-        onComplete: (Float) -> Unit
-    ) {
-        if (lines.isEmpty()) return
+        lineHeight: Float
+    ): Float {
+        if (lines.isEmpty()) return 0f
 
-        val lineRects = ArrayList<RectF>(lines.size)
+        val rects = ArrayList<RectF>(lines.size)
         var y = startY
-
         for (line in lines) {
-            val width = minOf(paint.measureText(line) + padX * 2f, maxWidth)
+            val w = minOf(paint.measureText(line) + padX * 2f, maxWidth)
             val h = lineHeight + padY * 2f
-            lineRects.add(RectF(LEFT, y, LEFT + width, y + h))
+            rects.add(RectF(LEFT, y, LEFT + w, y + h))
             y += h + SAME_TEXT_GAP
         }
 
-        // Draw the highlight as one continuous union. For wrapped lines, extend
-        // each adjacent pair to the larger right edge in their shared strip so
-        // there can be no visible horizontal seam between lines.
-        for (i in lineRects.indices) {
-            val rect = lineRects[i]
-            val previousRight = if (i > 0) lineRects[i - 1].right else rect.left
-            val nextRight = if (i < lineRects.lastIndex) lineRects[i + 1].right else rect.left
-            val left = rect.left
-            val right = maxOf(rect.right, previousRight, nextRight)
-            val top = rect.top
-            val bottom = rect.bottom
+        // Merge the wrapped lines into one continuous highlight silhouette.
+        // The union follows each line's actual text width, while adjacent lines
+        // have squared inner corners so the only rounded corners are on the outside.
+        val path = Path()
+        for (i in rects.indices) {
+            val r = rects[i]
+            val tl = if (i == 0) radius else 0f
+            val tr = if (i == 0) radius else 0f
+            val br = if (i == rects.lastIndex) radius else 0f
+            val bl = if (i == rects.lastIndex) radius else 0f
+            path.addRoundRect(
+                r,
+                floatArrayOf(tl, tl, tr, tr, br, br, bl, bl),
+                Path.Direction.CW
+            )
+        }
+        canvas.drawPath(path, bgPaint)
 
-            val topRadius = if (i == 0) radius else 0f
-            val bottomRadius = if (i == lineRects.lastIndex) radius else 0f
-            val path = android.graphics.Path().apply {
-                addRoundRect(
-                    RectF(left, top, right, bottom),
-                    floatArrayOf(
-                        topRadius, topRadius,
-                        topRadius, topRadius,
-                        bottomRadius, bottomRadius,
-                        bottomRadius, bottomRadius
-                    ),
-                    android.graphics.Path.Direction.CW
-                )
-            }
-            canvas.drawPath(path, bgPaint)
+        for (i in rects.indices) {
+            val r = rects[i]
+            canvas.drawText(lines[i], r.left + padX, r.top + padY + paint.textSize, paint)
         }
 
-        for (i in lineRects.indices) {
-            val rect = lineRects[i]
-            canvas.drawText(lines[i], rect.left + padX, rect.top + padY + paint.textSize, paint)
-        }
-
-        onComplete(lineRects.sumOf { it.height().toDouble() }.toFloat() + SAME_TEXT_GAP * (lines.size - 1))
+        return rects.sumOf { it.height().toDouble() }.toFloat() + SAME_TEXT_GAP * (rects.size - 1)
     }
 
     private fun visiblePrefixPreservingLineBreaks(value: String, maxWords: Int): String {
@@ -226,10 +191,7 @@ object ReelLayout {
                 if (word.isEmpty()) continue
                 val candidate = if (line.isEmpty()) word else "$line $word"
                 if (line.isEmpty() || paint.measureText(candidate) <= maxWidth) line = candidate
-                else {
-                    result.add(line)
-                    line = word
-                }
+                else { result.add(line); line = word }
             }
             if (line.isNotEmpty()) result.add(line)
         }
