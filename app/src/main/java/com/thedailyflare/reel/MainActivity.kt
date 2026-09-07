@@ -58,7 +58,6 @@ class MainActivity : Activity() {
     private lateinit var exportProgress: ProgressBar
     private var voicePlayer: MediaPlayer? = null
     private var ctaPreviewPlayer: MediaPlayer? = null
-    private val voicePreviewHandler = Handler(Looper.getMainLooper())
     private var voicePreviewGenerationVersion = 0
     private var cachedVoiceDurationMs = 0L
     private var cachedVoiceKey: String? = null
@@ -68,7 +67,6 @@ class MainActivity : Activity() {
     private var cachedCtaReady = false
     private val cachedCtaVoiceFile by lazy { File(cacheDir, "daily_flare_prepared_cta.wav") }
     private val ctaText = "FOLLOW THE DAILY FLARE ON SOCIAL MEDIA."
-    private val voicePreviewDebounce = Runnable { generateBackgroundVoicePreview() }
     private var voiceOptions = emptyList<VoiceTts.VoiceOption>()
     private var selectedVoice: VoiceTts.VoiceOption? = null
     private lateinit var titleInput: EditText
@@ -174,7 +172,7 @@ class MainActivity : Activity() {
         speedSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceSpeeds.map { "${it}×" })
         val savedSpeed = preferences.getFloat("voice_speed", 1.0f)
         speedSpinner.setSelection(voiceSpeeds.indexOf(savedSpeed).takeIf { it >= 0 } ?: 2, false)
-        speedSpinner.onItemSelectedListener = simpleSelectionListener { position -> preferences.edit().putFloat("voice_speed", voiceSpeeds.getOrElse(position) { 1.0f }).apply(); scheduleBackgroundVoicePreview() }
+        speedSpinner.onItemSelectedListener = simpleSelectionListener { position -> preferences.edit().putFloat("voice_speed", voiceSpeeds.getOrElse(position) { 1.0f }).apply() }
         root.addView(twoColumnRow("VOICE" to voiceSpinner, "SPEED" to speedSpinner), lp())
         root.addView(voiceStatus, lp())
         root.addView(titleInput, lp())
@@ -264,7 +262,6 @@ class MainActivity : Activity() {
             kokoroSetupRow.visibility = android.view.View.GONE
             // Once Kokoro is installed, hide the setup controls and message as well.
             voiceStatus.visibility = android.view.View.GONE
-            scheduleBackgroundVoicePreview()
         } }, { error -> runOnUiThread {
             voiceOptions = emptyList(); selectedVoice = null
             voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, emptyList<String>())
@@ -390,51 +387,7 @@ class MainActivity : Activity() {
 
     // Preview playback never calls Kokoro. It only plays narration that is already cached.
     private fun startCachedVoicePreview(startProgress: Int) {
-        if (!cachedVoiceReady || !cachedVoiceFile.exists() || cachedVoiceDurationMs <= 0L) return
-        stopPreviewAudio()
-        try {
-            val total = visualPreviewDurationMs()
-            val timelineOffsetMs = total * startProgress.coerceIn(0, 100) / 100L
-            if (timelineOffsetMs < cachedVoiceDurationMs) {
-                playCachedPreviewFile(cachedVoiceFile, timelineOffsetMs) {
-                    if (visualPreviewPlaying) startCachedCtaPreview(0L)
-                }
-            } else {
-                startCachedCtaPreview(timelineOffsetMs - cachedVoiceDurationMs)
-            }
-        } catch (_: Exception) {
-            stopPreviewAudio()
-        }
-    }
-
-    private fun startCachedCtaPreview(offsetMs: Long) {
-        if (!cachedCtaReady || !cachedCtaVoiceFile.exists() || cachedCtaVoiceFile.length() <= 0L) return
-        try {
-            ctaPreviewPlayer = MediaPlayer().apply {
-                setDataSource(cachedCtaVoiceFile.absolutePath)
-                prepare()
-                if (offsetMs > 0L) seekTo(offsetMs.coerceIn(0L, (duration - 1).coerceAtLeast(0).toLong()).toInt())
-                setOnCompletionListener { it.release(); ctaPreviewPlayer = null }
-                start()
-            }
-        } catch (_: Exception) {
-            try { ctaPreviewPlayer?.release() } catch (_: Exception) {}
-            ctaPreviewPlayer = null
-        }
-    }
-
-    private fun playCachedPreviewFile(file: File, offsetMs: Long, onComplete: () -> Unit) {
-        voicePlayer = MediaPlayer().apply {
-            setDataSource(file.absolutePath)
-            prepare()
-            if (offsetMs > 0L) seekTo(offsetMs.coerceIn(0L, (duration - 1).coerceAtLeast(0).toLong()).toInt())
-            setOnCompletionListener { player ->
-                player.release()
-                voicePlayer = null
-                onComplete()
-            }
-            start()
-        }
+        // Visual preview never generates Kokoro audio.
     }
 
     private fun stopPreviewAudio() {
