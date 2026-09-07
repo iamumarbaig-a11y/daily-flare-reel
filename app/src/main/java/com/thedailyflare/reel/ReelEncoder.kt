@@ -18,7 +18,7 @@ class ReelEncoder(private val context: Context) {
     interface Drain { fun onFrame(frame: Int, total: Int) {} }
 
     fun encode(
-        background: Bitmap,
+        backgrounds: List<Bitmap>,
         ctaBitmap: Bitmap,
         title: String,
         headlines: List<String>,
@@ -42,7 +42,7 @@ class ReelEncoder(private val context: Context) {
             headline.trim().split(Regex("\\s+")).count { it.isNotBlank() }
         }
         encodeFrames(
-            background,
+            backgrounds,
             ctaBitmap,
             title,
             headlines,
@@ -60,7 +60,7 @@ class ReelEncoder(private val context: Context) {
     }
 
     private fun encodeFrames(
-        background: Bitmap,
+        backgrounds: List<Bitmap>,
         ctaBitmap: Bitmap,
         title: String,
         headlines: List<String>,
@@ -120,9 +120,17 @@ class ReelEncoder(private val context: Context) {
                 val canvas = surface.lockCanvas(null)
                 try {
                     if (frame < mainFrames) {
-                        val progress = frame.toFloat() / (mainFrames - 1).coerceAtLeast(1)
-                        val smoothProgress = progress * progress * (3f - 2f * progress)
-                        drawZoomedCover(canvas, background, width, height, 1f + 0.18f * smoothProgress)
+                        // Split the dynamically calculated narration section equally
+                        // across every selected reel image. No fixed image duration.
+                        val imageCount = backgrounds.size.coerceAtLeast(1)
+                        val imageIndex = ((frame.toLong() * imageCount) / mainFrames.coerceAtLeast(1)).toInt()
+                            .coerceIn(0, imageCount - 1)
+                        val segmentStart = (imageIndex.toLong() * mainFrames) / imageCount
+                        val segmentEnd = ((imageIndex + 1L) * mainFrames) / imageCount
+                        val segmentLength = (segmentEnd - segmentStart).coerceAtLeast(1L)
+                        val imageProgress = ((frame - segmentStart).toFloat() / segmentLength.toFloat()).coerceIn(0f, 1f)
+                        val smoothProgress = imageProgress * imageProgress * (3f - 2f * imageProgress)
+                        drawZoomedCover(canvas, backgrounds[imageIndex], width, height, 1f + 0.18f * smoothProgress)
 
                         // Title is immediate. Body words still appear one by one,
                         // but each subheading gets its own slice of the measured
