@@ -352,9 +352,7 @@ class MainActivity : Activity() {
     // Silent visual playback stays independent from Kokoro. The duration scales with
     // the amount of text so longer reels do not race through the preview.
     private fun visualPreviewDurationMs(): Long {
-        val bodyWords = if (::headlineInputs.isInitialized) {
-            ReelLayout.bodyWordCount(headlineInputs.map { it.text.toString() })
-        } else 0
+        val bodyWords = ReelLayout.bodyWordCount(headlineInputs.map { it.text.toString() })
         return (3500L + bodyWords * 140L).coerceIn(3500L, 18000L)
     }
 
