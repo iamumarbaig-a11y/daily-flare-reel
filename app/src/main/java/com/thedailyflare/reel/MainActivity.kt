@@ -80,6 +80,8 @@ class MainActivity : Activity() {
     }
     private var mainBitmap: Bitmap? = null
     private val reelBitmaps = mutableListOf<Bitmap>()
+    // Temporary editor state only; never written to preferences.
+    private val reelImageUris = mutableListOf<Uri>()
     private val imageEffects = mutableListOf<ReelEncoder.ImageEffect>()
     private val imageEffectIntensities = mutableListOf<Float>()
     private var ctaBitmap: Bitmap? = null
@@ -96,6 +98,7 @@ class MainActivity : Activity() {
         preferences = getSharedPreferences("daily_flare_reel_preferences", MODE_PRIVATE)
         buildUi()
         restorePersistentSelections()
+        restoreTemporaryEditorState(savedInstanceState)
     }
 
     override fun onResume() {
@@ -236,9 +239,9 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data); if (resultCode != RESULT_OK || data == null) return
         when (requestCode) {
             100 -> {
-                reelBitmaps.clear(); imageEffects.clear(); imageEffectIntensities.clear(); val uris = mutableListOf<Uri>()
+                reelBitmaps.clear(); reelImageUris.clear(); imageEffects.clear(); imageEffectIntensities.clear(); val uris = mutableListOf<Uri>()
                 data.clipData?.let { clip -> for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri) } ?: data.data?.let { uris.add(it) }
-                uris.forEach { uri -> try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; decodePortrait(uri)?.let { reelBitmaps.add(it); imageEffects.add(ReelEncoder.ImageEffect.ZOOM_IN); imageEffectIntensities.add(0.18f) } }
+                uris.forEach { uri -> try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; decodePortrait(uri)?.let { reelBitmaps.add(it); reelImageUris.add(uri); imageEffects.add(ReelEncoder.ImageEffect.ZOOM_IN); imageEffectIntensities.add(0.18f) } }
                 mainBitmap = reelBitmaps.firstOrNull(); preview.backgroundBitmap = mainBitmap
                 mainImageLabel.text = when (reelBitmaps.size) { 0 -> "No images selected"; 1 -> "1 image selected"; else -> "${reelBitmaps.size} images selected" }
                 renderImageThumbnails(); refreshPreview()
@@ -347,6 +350,35 @@ class MainActivity : Activity() {
         preview.showCta = progress >= 0.98f && ctaBitmap != null
         preview.invalidate()
     }
+    override fun onSaveInstanceState(outState: Bundle) {
+        // Temporary editor state only. CTA and music keep their existing persistence.
+        if (::titleInput.isInitialized) {
+            outState.putString("temporary_title", titleInput.text.toString())
+            outState.putStringArrayList("temporary_headlines", ArrayList(headlineInputs.map { it.text.toString() }))
+            outState.putStringArrayList("temporary_image_uris", ArrayList(reelImageUris.map { it.toString() }))
+        }
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun restoreTemporaryEditorState(state: Bundle?) {
+        if (state == null) return
+        titleInput.setText(state.getString("temporary_title", ""))
+        val headlines = state.getStringArrayList("temporary_headlines").orEmpty()
+        headlineInputs.forEachIndexed { index, input -> input.setText(headlines.getOrNull(index).orEmpty()) }
+        val imageUris = state.getStringArrayList("temporary_image_uris").orEmpty().mapNotNull { runCatching { Uri.parse(it) }.getOrNull() }
+        if (imageUris.isNotEmpty()) {
+            reelBitmaps.clear(); reelImageUris.clear(); imageEffects.clear(); imageEffectIntensities.clear()
+            imageUris.forEach { uri -> decodePortrait(uri)?.let { bitmap ->
+                reelBitmaps.add(bitmap); reelImageUris.add(uri)
+                imageEffects.add(ReelEncoder.ImageEffect.ZOOM_IN); imageEffectIntensities.add(0.18f)
+            } }
+            mainBitmap = reelBitmaps.firstOrNull(); preview.backgroundBitmap = mainBitmap
+            mainImageLabel.text = when (reelBitmaps.size) { 0 -> "No images selected"; 1 -> "1 image selected"; else -> "${reelBitmaps.size} images selected" }
+            renderImageThumbnails()
+        }
+        refreshPreview()
+    }
+
     private fun refreshPreview() { preview.title=titleInput.text.toString().trim().ifBlank { "Main heading" }; preview.headlines=headlineInputs.map{it.text.toString().trim()}; preview.textPreviewProgress = 0f; preview.invalidate() }
     private fun testVoice() { if (!::voiceTts.isInitialized) return toast("Voice service is still loading"); val selected=selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition) ?: return toast("Select a Kokoro voice first"); val parts=mutableListOf<String>(); val heading=titleInput.text.toString().trim(); if(heading.isNotBlank())parts.add(heading); headlineInputs.map{it.text.toString().trim()}.filter{it.isNotBlank()}.forEach{parts.add(it)}; val speechText=parts.joinToString(". "); if(speechText.isBlank())return toast("Enter a heading or subheading first"); toast("Generating and playing voice..."); val output=File(cacheDir,"daily_flare_voice.wav"); val selectedSpeed=voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition){1.0f}; voiceTts.speakToFile(speechText,selected,output,selectedSpeed){ok,duration->runOnUiThread{if(!ok)toast("Voice generation failed")else{playVoiceFile(output);toast("Playing Kokoro voice at ${selectedSpeed}×: ${duration} ms")}}} }
     private fun getAudioDurationMs(file: File): Long { val retriever=MediaMetadataRetriever(); return try{retriever.setDataSource(file.absolutePath);retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?:0L}catch(_:Exception){0L}finally{try{retriever.release()}catch(_:Exception){}} }
