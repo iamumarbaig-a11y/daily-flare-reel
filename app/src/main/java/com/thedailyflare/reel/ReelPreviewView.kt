@@ -3,6 +3,7 @@ package com.thedailyflare.reel
 import android.content.Context
 import android.graphics.*
 import android.view.View
+import android.os.SystemClock
 import kotlin.math.abs
 
 class ReelPreviewView(context: Context) : View(context) {
@@ -15,6 +16,21 @@ class ReelPreviewView(context: Context) : View(context) {
     var effect: ReelEncoder.ImageEffect = ReelEncoder.ImageEffect.ZOOM_IN
     var effectIntensity = 0.18f
     var textPreviewProgress = 0f
+    private var textPlaybackStartedAtMs = 0L
+    private var textPlaybackRunning = false
+    private val textPlaybackTick = object : Runnable {
+        override fun run() {
+            if (!textPlaybackRunning) return
+            val words = ReelLayout.bodyWordCount(headlines)
+            if (words <= 0) { textPlaybackRunning = false; textPreviewProgress = 0f; invalidate(); return }
+            val elapsed = SystemClock.elapsedRealtime() - textPlaybackStartedAtMs
+            val duration = (words * 220L).coerceIn(900L, 9000L)
+            textPreviewProgress = (elapsed.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+            invalidate()
+            if (textPreviewProgress >= 1f) textPlaybackRunning = false else postDelayed(this, 16L)
+        }
+    }
+    fun playTextPreview() { removeCallbacks(textPlaybackTick); textPlaybackStartedAtMs = SystemClock.elapsedRealtime(); textPreviewProgress = 0f; textPlaybackRunning = true; post(textPlaybackTick) }
 
     override fun onMeasure(w: Int, h: Int) {
         val width = MeasureSpec.getSize(w)
