@@ -2,9 +2,8 @@ package com.thedailyflare.reel
 
 import android.content.Context
 import android.graphics.*
-import android.view.View
 import android.os.SystemClock
-import kotlin.math.abs
+import android.view.View
 
 class ReelPreviewView(context: Context) : View(context) {
     var title: String = "Main heading"
@@ -16,21 +15,38 @@ class ReelPreviewView(context: Context) : View(context) {
     var effect: ReelEncoder.ImageEffect = ReelEncoder.ImageEffect.ZOOM_IN
     var effectIntensity = 0.18f
     var textPreviewProgress = 0f
+
     private var textPlaybackStartedAtMs = 0L
     private var textPlaybackRunning = false
     private val textPlaybackTick = object : Runnable {
         override fun run() {
             if (!textPlaybackRunning) return
             val words = ReelLayout.bodyWordCount(headlines)
-            if (words <= 0) { textPlaybackRunning = false; textPreviewProgress = 0f; invalidate(); return }
+            if (words <= 0) {
+                textPlaybackRunning = false
+                textPreviewProgress = 0f
+                invalidate()
+                return
+            }
             val elapsed = SystemClock.elapsedRealtime() - textPlaybackStartedAtMs
             val duration = (words * 220L).coerceIn(900L, 9000L)
             textPreviewProgress = (elapsed.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
             invalidate()
-            if (textPreviewProgress >= 1f) textPlaybackRunning = false else postDelayed(this, 16L)
+            if (textPreviewProgress >= 1f) {
+                textPlaybackRunning = false
+            } else {
+                postDelayed(this, 16L)
+            }
         }
     }
-    fun playTextPreview() { removeCallbacks(textPlaybackTick); textPlaybackStartedAtMs = SystemClock.elapsedRealtime(); textPreviewProgress = 0f; textPlaybackRunning = true; post(textPlaybackTick) }
+
+    fun playTextPreview() {
+        removeCallbacks(textPlaybackTick)
+        textPreviewProgress = 0f
+        textPlaybackStartedAtMs = SystemClock.elapsedRealtime()
+        textPlaybackRunning = true
+        post(textPlaybackTick)
+    }
 
     override fun onMeasure(w: Int, h: Int) {
         val width = MeasureSpec.getSize(w)
@@ -58,13 +74,15 @@ class ReelPreviewView(context: Context) : View(context) {
         }
         if (showCta) return
 
-        // Normal mode: reveal body text one word at a time with no visual effect.
+        // Plain normal animation: reveal body words one-by-one, with no text effect.
         val total = ReelLayout.bodyWordCount(headlines)
-        if (total <= 0) {
-            ReelLayout.draw(canvas, title, headlines, width, height, null, false, 0)
-            return
-        }
-        val visible = kotlin.math.ceil(total * textPreviewProgress.coerceIn(0f, 1f)).toInt().coerceIn(0, total)
+        val visible = if (total <= 0) 0 else kotlin.math.ceil(total * textPreviewProgress.coerceIn(0f, 1f)).toInt().coerceIn(0, total)
         ReelLayout.draw(canvas, title, headlines, width, height, null, false, visible)
     }
 
+    override fun onDetachedFromWindow() {
+        removeCallbacks(textPlaybackTick)
+        textPlaybackRunning = false
+        super.onDetachedFromWindow()
+    }
+}
