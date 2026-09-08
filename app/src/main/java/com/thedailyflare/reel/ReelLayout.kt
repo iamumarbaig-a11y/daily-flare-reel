@@ -107,9 +107,12 @@ object ReelLayout {
             val words = headline.trim().split(Regex("[\\s\\n]+")).filter { it.isNotBlank() }
             val take = minOf(words.size, remainingWords)
             if (take <= 0) continue
-            val visibleText = visiblePrefixPreservingLineBreaks(headline, take)
+            // Wrap the COMPLETE headline first, then reveal words inside those fixed
+            // line positions. Re-wrapping a growing prefix made existing words jump or
+            // briefly disappear whenever the next word pushed a line over its width.
+            val fullLines = wrap(headline.trim(), textPaint, maxTextWidth)
+            val lines = revealWordsInFixedLines(fullLines, take)
             remainingWords -= take
-            val lines = wrap(visibleText, textPaint, maxTextWidth)
 
             y += drawConnectedTextBlock(canvas, lines, y, textPaint, white, RIGHT - LEFT, TEXT_PAD_X, TEXT_PAD_Y, TEXT_RADIUS, lineHeight) + GAP
             if (y > H - 80f) return
@@ -163,6 +166,25 @@ object ReelLayout {
         }
 
         return rects.sumOf { it.height().toDouble() }.toFloat() + SAME_TEXT_GAP * (rects.size - 1)
+    }
+
+    /**
+     * Reveals words without recalculating line wrapping. This keeps already-visible
+     * words in exactly the same place while the next word appears.
+     */
+    private fun revealWordsInFixedLines(fullLines: List<String>, maxWords: Int): List<String> {
+        if (maxWords <= 0) return emptyList()
+        var remaining = maxWords
+        val result = ArrayList<String>()
+        for (line in fullLines) {
+            if (remaining <= 0) break
+            val words = line.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+            val take = minOf(words.size, remaining)
+            if (take > 0) result.add(words.take(take).joinToString(" "))
+            remaining -= take
+            if (take < words.size) break
+        }
+        return result
     }
 
     private fun visiblePrefixPreservingLineBreaks(value: String, maxWords: Int): String {
