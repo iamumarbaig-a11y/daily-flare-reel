@@ -58,14 +58,6 @@ class MainActivity : Activity() {
     private lateinit var exportProgress: ProgressBar
     private var voicePlayer: MediaPlayer? = null
     private var ctaPreviewPlayer: MediaPlayer? = null
-    private var voicePreviewGenerationVersion = 0
-    private var cachedVoiceDurationMs = 0L
-    private var cachedVoiceKey: String? = null
-    private var cachedVoiceReady = false
-    private val cachedVoiceFile by lazy { File(cacheDir, "daily_flare_prepared_voice.wav") }
-    private var cachedCtaKey: String? = null
-    private var cachedCtaReady = false
-    private val cachedCtaVoiceFile by lazy { File(cacheDir, "daily_flare_prepared_cta.wav") }
     private val ctaText = "FOLLOW THE DAILY FLARE ON SOCIAL MEDIA."
     private var voiceOptions = emptyList<VoiceTts.VoiceOption>()
     private var selectedVoice: VoiceTts.VoiceOption? = null
@@ -183,7 +175,6 @@ class MainActivity : Activity() {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
                 selectedVoice = voiceOptions.getOrNull(position)
                 selectedVoice?.name?.let { preferences.edit().putString("voice_name", it).apply() }
-                scheduleBackgroundVoicePreview()
             }
         }
         // Create setup controls before checking Kokoro: initialize() may invoke its callback immediately.
@@ -481,6 +472,6 @@ ReelEncoder(this).encode(backgrounds,cta,title,headlines,voiceDurationMs,measure
             .show()
     }
 
-    override fun onDestroy(){stopVisualPreview(resetIcon = false);voicePlayer?.release();voicePlayer=null;voicePreviewHandler.removeCallbacks(voicePreviewDebounce);if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
+    override fun onDestroy(){stopVisualPreview(resetIcon = false);voicePlayer?.release();voicePlayer=null;if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
     private fun toast(message:String)=Toast.makeText(this,message,Toast.LENGTH_LONG).show()
 }
