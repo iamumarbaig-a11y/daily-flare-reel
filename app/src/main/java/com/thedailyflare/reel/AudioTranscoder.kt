@@ -14,7 +14,6 @@ import kotlin.math.floor
 class AudioTranscoder(private val context: Context) {
     companion object {
         private const val MUSIC_VOLUME = 0.10f
-        private const val VOICE_TARGET_PEAK = 26000
     }
 
     fun transcode(uri: Uri, output: File): Boolean {
@@ -103,7 +102,7 @@ class AudioTranscoder(private val context: Context) {
      * Mixes the generated TTS voice with the selected background music.
      * Music stays at 20%; voice is kept at full level and starts at 0 seconds.
      */
-    fun transcodeMixed(musicUri: Uri, voiceFile: File, output: File, ctaVoiceFile: File? = null, musicVolume: Float = 0.10f): Boolean {
+    fun transcodeMixed(musicUri: Uri, voiceFile: File, output: File, ctaVoiceFile: File? = null): Boolean {
         return try {
             val music = decodeToPcm { extractor -> extractor.setDataSource(context, musicUri, null) } ?: return false
             val voice = decodeToPcm { extractor -> extractor.setDataSource(voiceFile.absolutePath) } ?: return false
@@ -111,16 +110,14 @@ class AudioTranscoder(private val context: Context) {
             val targetRate = music.sampleRate
             val targetChannels = music.channels
             val musicSamples = toTarget(music, targetRate, targetChannels)
-            // Normalize each Kokoro voice track to a consistent peak before mixing.
-            // This prevents naturally quieter voices from making the same music level feel louder.
-            val voiceSamples = normalizeVoice(toTarget(voice, targetRate, targetChannels))
-            val ctaSamples = ctaVoice?.let { normalizeVoice(toTarget(it, targetRate, targetChannels)) } ?: ShortArray(0)
+            val voiceSamples = toTarget(voice, targetRate, targetChannels)
+            val ctaSamples = ctaVoice?.let { toTarget(it, targetRate, targetChannels) } ?: ShortArray(0)
             // Main narration followed by CTA speech; silence naturally fills any remaining CTA time.
             val totalSamples = voiceSamples.size + ctaSamples.size
             val mixed = ByteArray(totalSamples * 2)
             var i = 0
             while (i < totalSamples) {
-                val musicValue = if (musicSamples.isNotEmpty()) (musicSamples[i % musicSamples.size] * musicVolume.coerceIn(0f, 1f)).toInt() else 0
+                val musicValue = if (musicSamples.isNotEmpty()) (musicSamples[i % musicSamples.size] * MUSIC_VOLUME).toInt() else 0
                 val voiceValue = when {
                     i < voiceSamples.size -> voiceSamples[i].toInt()
                     i - voiceSamples.size < ctaSamples.size -> ctaSamples[i - voiceSamples.size].toInt()
@@ -215,20 +212,6 @@ class AudioTranscoder(private val context: Context) {
             return PcmData(samples, sampleRate, channels)
         } finally {
             extractor.release()
-        }
-    }
-
-    private fun normalizeVoice(samples: ShortArray): ShortArray {
-        if (samples.isEmpty()) return samples
-        var peak = 0
-        for (sample in samples) {
-            val magnitude = if (sample == Short.MIN_VALUE) 32768 else kotlin.math.abs(sample.toInt())
-            if (magnitude > peak) peak = magnitude
-        }
-        if (peak == 0) return samples
-        val gain = VOICE_TARGET_PEAK.toFloat() / peak.toFloat()
-        return ShortArray(samples.size) { index ->
-            (samples[index].toInt() * gain).toInt().coerceIn(-32768, 32767).toShort()
         }
     }
 
