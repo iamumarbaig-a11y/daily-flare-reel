@@ -198,6 +198,14 @@ class MainActivity : Activity() {
 
     private fun refreshPreview() { preview.title = titleInput.text.toString(); preview.headlines = headlineInputs.map { it.text.toString() }; preview.invalidate(); saveSessionState() }
 
+    private fun decodePortrait(uri: Uri): Bitmap? {
+        return try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                BitmapFactory.decodeStream(input)
+            }
+        } catch (_: Exception) { null }
+    }
+
     private fun testVoice() {
         if (!::voiceTts.isInitialized) return toast("Voice service is still loading")
         val selected = voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?.name
