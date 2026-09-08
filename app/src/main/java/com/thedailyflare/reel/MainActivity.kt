@@ -47,7 +47,13 @@ class MainActivity : Activity() {
     private var ctaBitmap: Bitmap? = null
     private var musicUri: Uri? = null
 
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); buildUi() }
+    private val prefs by lazy { getSharedPreferences(PREFS, MODE_PRIVATE) }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        buildUi()
+        restoreEditorState()
+    }
 
     private fun buildUi() {
         val scroll = ScrollView(this)
@@ -62,12 +68,14 @@ class MainActivity : Activity() {
         mainImageLabel = label("No main image selected"); root.addView(mainImageLabel, lp())
         section(root, "MAIN HEADING")
         titleInput = edit("Main heading", 2); root.addView(titleInput, lp())
-        titleInput.setOnFocusChangeListener { _, _ -> refreshPreview() }
+        titleInput.setOnFocusChangeListener { _, _ -> refreshPreview(); saveEditorState() }
+        titleInput.doAfterTextChanged { refreshPreview(); saveEditorState() }
         for (i in 1..7) {
             section(root, "SUBHEADING $i")
             val input = edit("Subheading $i", 2)
             headlineInputs.add(input); root.addView(input, lp())
-            input.setOnFocusChangeListener { _, _ -> refreshPreview() }
+            input.setOnFocusChangeListener { _, _ -> refreshPreview(); saveEditorState() }
+            input.doAfterTextChanged { refreshPreview(); saveEditorState() }
         }
         section(root, "2. 3-SECOND CTA IMAGE")
         root.addView(button("CHOOSE CTA IMAGE") { pickImage(101) }, lp())
@@ -83,6 +91,11 @@ class MainActivity : Activity() {
                 voiceOptions = options
                 voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options.map { it.label })
                 voiceStatus.text = if (options.isEmpty()) "No English voices available in the active Android TTS engine" else options.size.toString() + " English voice(s) available"
+                val savedVoice = prefs.getString(KEY_VOICE, null)
+                if (savedVoice != null) {
+                    val index = options.indexOfFirst { it.name == savedVoice }
+                    if (index >= 0) voiceSpinner.setSelection(index, false)
+                }
                 if (options.isEmpty()) toast("No English Android TTS voices found")
             }
         }, { error -> runOnUiThread { voiceStatus.text = error; toast(error) } })
@@ -104,6 +117,10 @@ class MainActivity : Activity() {
         root.addView(exportProgress, lp())
         root.addView(button("EXPORT REEL") { exportReel() }, lp())
         setContentView(scroll)
+        voiceSpinner.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) { saveEditorState() }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+        })
     }
 
     private fun section(root: LinearLayout, value: String) { root.addView(TextView(this).apply { text = value; textSize = 18f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 16, 0, 6) }, lp()) }
@@ -121,38 +138,47 @@ class MainActivity : Activity() {
         val uri = data.data!!
         try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
         when (requestCode) {
-            100 -> { mainBitmap = decodePortrait(uri); preview.backgroundBitmap = mainBitmap; mainImageLabel.text = "Main image selected"; refreshPreview() }
-            101 -> { ctaBitmap = decodePortrait(uri); preview.ctaBitmap = ctaBitmap; ctaImageLabel.text = "CTA image selected"; preview.invalidate() }
-            102 -> { musicUri = uri; musicLabel.text = "Music selected" }
+            100 -> { mainBitmap = decodePortrait(uri); preview.backgroundBitmap = mainBitmap; mainImageLabel.text = "Main image selected"; prefs.edit().putString(KEY_MAIN_URI, uri.toString()).apply(); refreshPreview() }
+            101 -> { ctaBitmap = decodePortrait(uri); preview.ctaBitmap = ctaBitmap; ctaImageLabel.text = "CTA image selected"; prefs.edit().putString(KEY_CTA_URI, uri.toString()).apply(); preview.invalidate() }
+            102 -> { musicUri = uri; musicLabel.text = "Music selected"; prefs.edit().putString(KEY_MUSIC_URI, uri.toString()).apply() }
         }
+        saveEditorState()
     }
 
-    private fun decodePortrait(uri: Uri): Bitmap? {
-        return try {
-            val decoded = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } ?: return null
-            val orientation = contentResolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) } ?: ExifInterface.ORIENTATION_NORMAL
-            val matrix = Matrix()
-            when (orientation) {
-                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
-                ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
-                ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.setScale(1f, -1f)
-                ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.setRotate(90f); matrix.postScale(-1f, 1f) }
-                ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
-                ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(-90f); matrix.postScale(-1f, 1f) }
-                ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
-            }
-            val oriented = if (orientation == ExifInterface.ORIENTATION_NORMAL) decoded else Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also { if (it !== decoded) decoded.recycle() }
-            centerCropPortrait(oriented)
-        } catch (_: Exception) { null }
+    private fun restoreEditorState() {
+        titleInput.setText(prefs.getString(KEY_TITLE, "") ?: "")
+        for (i in headlineInputs.indices) headlineInputs[i].setText(prefs.getString("$KEY_HEADLINE_PREFIX$i", "") ?: "")
+
+        restoreUri(KEY_MAIN_URI)?.let { uri ->
+            mainBitmap = decodePortrait(uri)
+            preview.backgroundBitmap = mainBitmap
+            mainImageLabel.text = if (mainBitmap != null) "Main image selected" else "Saved main image unavailable"
+        }
+        restoreUri(KEY_CTA_URI)?.let { uri ->
+            ctaBitmap = decodePortrait(uri)
+            preview.ctaBitmap = ctaBitmap
+            ctaImageLabel.text = if (ctaBitmap != null) "CTA image selected" else "Saved CTA image unavailable"
+        }
+        restoreUri(KEY_MUSIC_URI)?.let { uri ->
+            musicUri = uri
+            musicLabel.text = "Music selected"
+        }
+        refreshPreview()
     }
 
-    private fun centerCropPortrait(source: Bitmap): Bitmap {
-        val targetW = 1080; val targetH = 1920; val targetRatio = targetW.toFloat() / targetH; val sourceRatio = source.width.toFloat() / source.height
-        val cropW: Int; val cropH: Int
-        if (sourceRatio > targetRatio) { cropH = source.height; cropW = (cropH * targetRatio).toInt() } else { cropW = source.width; cropH = (cropW / targetRatio).toInt() }
-        val left = (source.width - cropW) / 2; val top = (source.height - cropH) / 2
-        val cropped = Bitmap.createBitmap(source, left, top, cropW, cropH); val scaled = Bitmap.createScaledBitmap(cropped, targetW, targetH, true)
-        if (cropped !== source) cropped.recycle(); if (scaled !== source) source.recycle(); return scaled
+    private fun restoreUri(key: String): Uri? {
+        val value = prefs.getString(key, null) ?: return null
+        return try { Uri.parse(value) } catch (_: Exception) { null }
+    }
+
+    private fun saveEditorState() {
+        if (!::titleInput.isInitialized) return
+        val editor = prefs.edit().putString(KEY_TITLE, titleInput.text.toString())
+        headlineInputs.forEachIndexed { index, input -> editor.putString("$KEY_HEADLINE_PREFIX$index", input.text.toString()) }
+        if (::voiceSpinner.isInitialized && voiceOptions.isNotEmpty()) {
+            voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?.name?.let { editor.putString(KEY_VOICE, it) }
+        }
+        editor.apply()
     }
 
     private fun refreshPreview() { preview.title = titleInput.text.toString(); preview.headlines = headlineInputs.map { it.text.toString() }; preview.invalidate() }
@@ -170,26 +196,14 @@ class MainActivity : Activity() {
         val output = File(cacheDir, "daily_flare_voice.wav")
         voiceTts.speakToFile(speechText, selected, output) { ok, duration ->
             runOnUiThread {
-                if (!ok) {
-                    toast("Voice generation failed")
-                } else {
-                    playVoiceFile(output)
-                    toast("Playing selected voice: " + duration + " ms")
-                }
+                if (!ok) toast("Voice generation failed") else { playVoiceFile(output); toast("Playing selected voice: " + duration + " ms") }
             }
         }
     }
 
     private fun getAudioDurationMs(file: File): Long {
         val retriever = MediaMetadataRetriever()
-        return try {
-            retriever.setDataSource(file.absolutePath)
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-        } catch (_: Exception) {
-            0L
-        } finally {
-            try { retriever.release() } catch (_: Exception) { }
-        }
+        return try { retriever.setDataSource(file.absolutePath); retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L } catch (_: Exception) { 0L } finally { try { retriever.release() } catch (_: Exception) { } }
     }
 
     private fun playVoiceFile(file: File) {
@@ -198,20 +212,13 @@ class MainActivity : Activity() {
             voicePlayer = MediaPlayer().apply {
                 setDataSource(file.absolutePath)
                 setOnCompletionListener { it.release(); voicePlayer = null }
-                prepare()
-                start()
+                prepare(); start()
             }
-        } catch (_: Exception) {
-            toast("Voice was generated but could not be played")
-        }
+        } catch (_: Exception) { toast("Voice was generated but could not be played") }
     }
 
     private fun openVoiceSettings() {
-        try {
-            startActivity(Intent("com.android.settings.TTS_SETTINGS"))
-        } catch (_: Exception) {
-            toast("Android TTS settings are unavailable on this phone")
-        }
+        try { startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (_: Exception) { toast("Android TTS settings are unavailable on this phone") }
     }
 
     private fun exportReel() {
@@ -220,6 +227,7 @@ class MainActivity : Activity() {
         val music = musicUri ?: return toast("Choose music")
         val title = titleInput.text.toString().trim().ifBlank { "Main heading" }
         val headlines = headlineInputs.map { it.text.toString().trim() }
+        saveEditorState()
         exportStatus.text = "Preparing export..."; exportProgress.progress = 0; toast("Starting export")
         thread(name = "daily-flare-export") {
             try {
@@ -240,25 +248,13 @@ class MainActivity : Activity() {
                 val voiceLatch = CountDownLatch(1)
                 var voiceOk = false
                 if (!::voiceTts.isInitialized) throw IllegalStateException("Android TTS is not ready")
-                voiceTts.speakToFile(speechText, selectedVoice, voice) { ok, _ ->
-                    voiceOk = ok
-                    voiceLatch.countDown()
-                }
-                if (!voiceLatch.await(60, TimeUnit.SECONDS) || !voiceOk || !voice.exists() || voice.length() == 0L) {
-                    throw IllegalStateException("Voice generation failed")
-                }
+                voiceTts.speakToFile(speechText, selectedVoice, voice) { ok, _ -> voiceOk = ok; voiceLatch.countDown() }
+                if (!voiceLatch.await(60, TimeUnit.SECONDS) || !voiceOk || !voice.exists() || voice.length() == 0L) throw IllegalStateException("Voice generation failed")
 
                 val voiceDurationMs = getAudioDurationMs(voice)
-                // Estimate the spoken headline from character weight rather than raw
-                // word count. Word-count ratios were consistently overestimating the
-                // headline and leaving an empty pause before body words appeared.
                 val spokenCharacters = speechText.count { !it.isWhitespace() && it != '.' && it != ',' }
                 val titleCharacters = title.count { !it.isWhitespace() && it != '.' && it != ',' }
-                val rawTitleSpeechMs = if (spokenCharacters > 0) {
-                    voiceDurationMs * titleCharacters / spokenCharacters
-                } else 0L
-                // Start body text slightly early to remove the visible dead gap after
-                // the spoken headline while keeping the headline itself immediate.
+                val rawTitleSpeechMs = if (spokenCharacters > 0) voiceDurationMs * titleCharacters / spokenCharacters else 0L
                 val titleSpeechMs = (rawTitleSpeechMs - 250L).coerceAtLeast(0L)
                 ReelEncoder(this).encode(bg, cta, title, headlines, voiceDurationMs, titleSpeechMs, video, object : ReelEncoder.Drain {
                     override fun onFrame(frame: Int, total: Int) {
@@ -293,24 +289,40 @@ class MainActivity : Activity() {
                     put(MediaStore.Video.Media.IS_PENDING, 1)
                 }
                 val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return false
-                try {
-                    contentResolver.openOutputStream(uri)?.use { out -> source.inputStream().use { input -> input.copyTo(out) } } ?: return false
-                    values.clear(); values.put(MediaStore.Video.Media.IS_PENDING, 0); contentResolver.update(uri, values, null, null) > 0
-                } catch (_: Exception) { contentResolver.delete(uri, null, null); false }
+                try { contentResolver.openOutputStream(uri)?.use { out -> source.inputStream().use { input -> input.copyTo(out) } } ?: return false; values.clear(); values.put(MediaStore.Video.Media.IS_PENDING, 0); contentResolver.update(uri, values, null, null) > 0 } catch (_: Exception) { contentResolver.delete(uri, null, null); false }
             } else {
                 val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "Daily Flare Reel").apply { mkdirs() }
-                val destination = File(dir, "daily_flare_reel_${System.currentTimeMillis()}.mp4"); source.copyTo(destination, overwrite = true)
-                sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(destination))); destination.exists() && destination.length() > 0L
+                val destination = File(dir, "daily_flare_reel_${System.currentTimeMillis()}.mp4"); source.copyTo(destination, overwrite = true); sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(destination))); destination.exists() && destination.length() > 0L
             }
         } catch (_: Exception) { false }
     }
 
+    override fun onPause() { saveEditorState(); super.onPause() }
+
     override fun onDestroy() {
-        voicePlayer?.release()
-        voicePlayer = null
+        saveEditorState()
+        voicePlayer?.release(); voicePlayer = null
         if (::voiceTts.isInitialized) voiceTts.shutdown()
         super.onDestroy()
     }
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+
+    private fun EditText.doAfterTextChanged(action: () -> Unit) {
+        addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = action()
+            override fun afterTextChanged(s: android.text.Editable?) = Unit
+        })
+    }
+
+    companion object {
+        private const val PREFS = "daily_flare_reel_state"
+        private const val KEY_TITLE = "title"
+        private const val KEY_HEADLINE_PREFIX = "headline_"
+        private const val KEY_MAIN_URI = "main_image_uri"
+        private const val KEY_CTA_URI = "cta_image_uri"
+        private const val KEY_MUSIC_URI = "music_uri"
+        private const val KEY_VOICE = "voice"
+    }
 }
