@@ -12,7 +12,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
-import android.content.ComponentCallbacks2
 import android.provider.MediaStore
 import android.view.ViewGroup
 import android.widget.Button
@@ -48,7 +47,6 @@ class MainActivity : Activity() {
     private var ctaBitmap: Bitmap? = null
     private var musicUri: Uri? = null
     private var mainImageUri: Uri? = null
-    private var restoringSession = false
 
     private val prefs by lazy { getSharedPreferences(PREFS, MODE_PRIVATE) }
 
@@ -149,10 +147,8 @@ class MainActivity : Activity() {
     }
 
     private fun restoreEditorState() {
-        titleInput.setText(prefs.getString(KEY_TITLE, "") ?: "")
-        for (i in headlineInputs.indices) headlineInputs[i].setText(prefs.getString("$KEY_HEADLINE_PREFIX$i", "") ?: "")
-
         restoreSessionState()
+
         restoreUri(KEY_CTA_URI)?.let { uri ->
             ctaBitmap = decodePortrait(uri)
             preview.ctaBitmap = ctaBitmap
@@ -171,8 +167,7 @@ class MainActivity : Activity() {
     }
 
     private fun saveEditorState() {
-        // Only CTA/music/voice keep their existing persistent behavior.
-        if (!::titleInput.isInitialized || restoringSession) return
+        if (!::titleInput.isInitialized) return
         val editor = prefs.edit()
         if (::voiceSpinner.isInitialized && voiceOptions.isNotEmpty()) {
             voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?.name?.let { editor.putString(KEY_VOICE, it) }
@@ -181,35 +176,171 @@ class MainActivity : Activity() {
     }
 
     private fun saveSessionState() {
-        if (!::titleInput.isInitialized || restoringSession) return
-        val state = getSharedPreferences(SESSION_PREFS, MODE_PRIVATE).edit()
+        if (!::titleInput.isInitialized) return
+        val editor = getSharedPreferences(SESSION_PREFS, MODE_PRIVATE).edit()
             .putString(KEY_TITLE, titleInput.text.toString())
             .putString(KEY_SESSION_MAIN_URI, mainImageUri?.toString())
-        headlineInputs.forEachIndexed { index, input -> state.putString("$KEY_HEADLINE_PREFIX$index", input.text.toString()) }
-        state.apply()
+        headlineInputs.forEachIndexed { i, input -> editor.putString("$KEY_HEADLINE_PREFIX$i", input.text.toString()) }
+        editor.apply()
     }
 
     private fun restoreSessionState() {
-        val state = getSharedPreferences(SESSION_PREFS, MODE_PRIVATE)
-        restoringSession = true
-        titleInput.setText(state.getString(KEY_TITLE, "") ?: "")
-        for (i in headlineInputs.indices) headlineInputs[i].setText(state.getString("$KEY_HEADLINE_PREFIX$i", "") ?: "")
-        val value = state.getString(KEY_SESSION_MAIN_URI, null)
-        if (value != null) {
-            val uri = restoreUriString(value)
-            mainImageUri = uri
-            if (uri != null) {
-                mainBitmap = decodePortrait(uri)
-                preview.backgroundBitmap = mainBitmap
-                mainImageLabel.text = if (mainBitmap != null) "Main image selected" else "Session main image unavailable"
+        val session = getSharedPreferences(SESSION_PREFS, MODE_PRIVATE)
+        titleInput.setText(session.getString(KEY_TITLE, "") ?: "")
+        for (i in headlineInputs.indices) headlineInputs[i].setText(session.getString("$KEY_HEADLINE_PREFIX$i", "") ?: "")
+        session.getString(KEY_SESSION_MAIN_URI, null)?.let {
+            mainImageUri = Uri.parse(it)
+            mainBitmap = decodePortrait(mainImageUri!!)
+            preview.backgroundBitmap = mainBitmap
+            mainImageLabel.text = if (mainBitmap != null) "Main image selected" else "Session main image unavailable"
+        }
+    }
+
+    private fun refreshPreview() { preview.title = titleInput.text.toString(); preview.headlines = headlineInputs.map { it.text.toString() }; preview.invalidate(); saveSessionState() }
+
+    private fun testVoice() {
+        if (!::voiceTts.isInitialized) return toast("Voice service is still loading")
+        val selected = voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?.name
+        val parts = mutableListOf<String>()
+        val heading = titleInput.text.toString().trim()
+        if (heading.isNotBlank()) parts.add(heading)
+        headlineInputs.map { it.text.toString().trim() }.filter { it.isNotBlank() }.forEach { parts.add(it) }
+        val speechText = parts.joinToString(". ")
+        if (speechText.isBlank()) return toast("Enter a heading or subheading first")
+        toast("Generating and playing voice...")
+        val output = File(cacheDir, "daily_flare_voice.wav")
+        voiceTts.speakToFile(speechText, selected, output) { ok, duration ->
+            runOnUiThread {
+                if (!ok) toast("Voice generation failed") else { playVoiceFile(output); toast("Playing selected voice: " + duration + " ms") }
             }
         }
-        restoringSession = false
     }
 
-    private fun clearSessionState() {
-        getSharedPreferences(SESSION_PREFS, MODE_PRIVATE).edit().clear().apply()
+    private fun getAudioDurationMs(file: File): Long {
+        val retriever = MediaMetadataRetriever()
+        return try { retriever.setDataSource(file.absolutePath); retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L } catch (_: Exception) { 0L } finally { try { retriever.release() } catch (_: Exception) { } }
     }
 
-    private fun restoreUriString(value: String): Uri? = try { Uri.parse(value) } catch (_: Exception) { null }
+    private fun playVoiceFile(file: File) {
+        try {
+            voicePlayer?.release()
+            voicePlayer = MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                setOnCompletionListener { it.release(); voicePlayer = null }
+                prepare(); start()
+            }
+        } catch (_: Exception) { toast("Voice was generated but could not be played") }
+    }
+
+    private fun openVoiceSettings() {
+        try { startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (_: Exception) { toast("Android TTS settings are unavailable on this phone") }
+    }
+
+    private fun exportReel() {
+        val bg = mainBitmap ?: return toast("Choose the main 15-second image")
+        val cta = ctaBitmap ?: return toast("Choose the 3-second CTA image")
+        val music = musicUri ?: return toast("Choose music")
+        val title = titleInput.text.toString().trim().ifBlank { "Main heading" }
+        val headlines = headlineInputs.map { it.text.toString().trim() }
+        saveEditorState()
+        exportStatus.text = "Preparing export..."; exportProgress.progress = 0; toast("Starting export")
+        thread(name = "daily-flare-export") {
+            try {
+                val video = File(cacheDir, "daily_flare_video.mp4")
+                val voice = File(cacheDir, "daily_flare_export_voice.wav")
+                val ctaVoice = File(cacheDir, "daily_flare_cta_voice.wav")
+                val audio = File(cacheDir, "daily_flare_mixed_audio_aac.mp4")
+                val output = File(cacheDir, "daily_flare_reel_18s.mp4")
+                video.delete(); voice.delete(); ctaVoice.delete(); audio.delete(); output.delete()
+
+                val speechParts = mutableListOf<String>()
+                if (title.isNotBlank()) speechParts.add(title)
+                headlines.filter { it.isNotBlank() }.forEach { speechParts.add(it) }
+                val speechText = speechParts.joinToString(". ")
+                if (speechText.isBlank()) throw IllegalStateException("Enter a heading or subheading for the voice")
+
+                val selectedVoice = voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?.name
+                val voiceLatch = CountDownLatch(1)
+                var voiceOk = false
+                if (!::voiceTts.isInitialized) throw IllegalStateException("Android TTS is not ready")
+                voiceTts.speakToFile(speechText, selectedVoice, voice) { ok, _ -> voiceOk = ok; voiceLatch.countDown() }
+                if (!voiceLatch.await(60, TimeUnit.SECONDS) || !voiceOk || !voice.exists() || voice.length() == 0L) throw IllegalStateException("Voice generation failed")
+
+                val voiceDurationMs = getAudioDurationMs(voice)
+                val spokenCharacters = speechText.count { !it.isWhitespace() && it != '.' && it != ',' }
+                val titleCharacters = title.count { !it.isWhitespace() && it != '.' && it != ',' }
+                val rawTitleSpeechMs = if (spokenCharacters > 0) voiceDurationMs * titleCharacters / spokenCharacters else 0L
+                val titleSpeechMs = (rawTitleSpeechMs - 250L).coerceAtLeast(0L)
+                ReelEncoder(this).encode(bg, cta, title, headlines, voiceDurationMs, titleSpeechMs, video, object : ReelEncoder.Drain {
+                    override fun onFrame(frame: Int, total: Int) {
+                        val percent = ((frame * 80L) / total.coerceAtLeast(1)).toInt()
+                        runOnUiThread { exportProgress.progress = percent; exportStatus.text = "Rendering video... $percent%" }
+                    }
+                })
+                if (!video.exists() || video.length() == 0L) throw IllegalStateException("Video rendering produced no output")
+                runOnUiThread { exportProgress.progress = 82; exportStatus.text = "Generating CTA voice..." }
+                val ctaLatch = CountDownLatch(1)
+                var ctaOk = false
+                voiceTts.speakToFile("FOLLOW US ON SOCIAL MEDIA", selectedVoice, ctaVoice) { ok, _ -> ctaOk = ok; ctaLatch.countDown() }
+                if (!ctaLatch.await(30, TimeUnit.SECONDS) || !ctaOk || !ctaVoice.exists() || ctaVoice.length() == 0L) throw IllegalStateException("CTA voice generation failed")
+                runOnUiThread { exportProgress.progress = 88; exportStatus.text = "Mixing voice and music..." }
+                if (!AudioTranscoder(this).transcodeMixed(music, voice, audio, ctaVoice) || !audio.exists() || audio.length() == 0L) throw IllegalStateException("Voice and music could not be mixed")
+                runOnUiThread { exportProgress.progress = 95; exportStatus.text = "Finalizing video..." }
+                if (!AudioMuxer().mux(video, audio, output) || !output.exists() || output.length() == 0L) throw IllegalStateException("Audio/video muxing failed")
+                val saved = saveToGallery(output)
+                runOnUiThread { exportProgress.progress = 100; exportStatus.text = if (saved) "Export complete ✓" else "Export completed but could not save to gallery"; toast(if (saved) "Export complete: saved to Movies/Daily Flare Reel" else "Export completed but could not save to gallery") }
+            } catch (e: Exception) { runOnUiThread { toast("Export failed: ${e.message ?: "unknown error"}") } }
+        }
+    }
+
+    private fun saveToGallery(source: File): Boolean {
+        if (!source.exists() || source.length() == 0L) return false
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, "daily_flare_reel_${System.currentTimeMillis()}.mp4")
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/Daily Flare Reel")
+                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                }
+                val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+                try { contentResolver.openOutputStream(uri)?.use { out -> source.inputStream().use { input -> input.copyTo(out) } } ?: return false; values.clear(); values.put(MediaStore.Video.Media.IS_PENDING, 0); contentResolver.update(uri, values, null, null) > 0 } catch (_: Exception) { contentResolver.delete(uri, null, null); false }
+            } else {
+                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "Daily Flare Reel").apply { mkdirs() }
+                val destination = File(dir, "daily_flare_reel_${System.currentTimeMillis()}.mp4"); source.copyTo(destination, overwrite = true); sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(destination))); destination.exists() && destination.length() > 0L
+            }
+        } catch (_: Exception) { false }
+    }
+
+    override fun onPause() { saveEditorState(); saveSessionState(); super.onPause() }
+
+    override fun onDestroy() {
+        saveEditorState()
+        saveSessionState()
+        voicePlayer?.release(); voicePlayer = null
+        if (::voiceTts.isInitialized) voiceTts.shutdown()
+        super.onDestroy()
+    }
+
+    private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+
+    private fun EditText.doAfterTextChanged(action: () -> Unit) {
+        addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = action()
+            override fun afterTextChanged(s: android.text.Editable?) = Unit
+        })
+    }
+
+    companion object {
+        private const val PREFS = "daily_flare_reel_state"
+        private const val SESSION_PREFS = "daily_flare_reel_editor_session"
+        private const val KEY_TITLE = "title"
+        private const val KEY_HEADLINE_PREFIX = "headline_"
+        private const val KEY_SESSION_MAIN_URI = "session_main_image_uri"
+        private const val KEY_MAIN_URI = "main_image_uri"
+        private const val KEY_CTA_URI = "cta_image_uri"
+        private const val KEY_MUSIC_URI = "music_uri"
+        private const val KEY_VOICE = "voice"
+    }
 }
