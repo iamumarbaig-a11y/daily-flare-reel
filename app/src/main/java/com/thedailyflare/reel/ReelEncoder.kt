@@ -164,33 +164,15 @@ class ReelEncoder(private val context: Context) {
         effect: String, intensityPercent: Int, revealMode: String,
         layer: Bitmap, mask: Bitmap
     ) {
+        // Export must use the same plain drawing path as the on-screen preview.
+        // The old code composited a "settled" frame plus a masked delta layer. With
+        // effects disabled that extra DST_OUT compositing could briefly expose an
+        // intermediate bitmap state, producing the clipped-first-letter artifact.
         val total = ReelLayout.bodyWordCount(headlines)
-        if (total <= 0) { ReelLayout.draw(canvas, title, headlines, width, height, null, false, 0); return }
-        val wordProgress = if (revealMode == "INSTANT") total.toFloat()
+        val wordProgress = if (total <= 0) 0f else if (revealMode == "INSTANT") total.toFloat()
             else wordProgressAtFrame(frame, titleDelayFrames, headlineWordCounts, segmentFrames)
         val visible = kotlin.math.ceil(wordProgress).toInt().coerceIn(0, total)
-        if (visible <= 0) { ReelLayout.draw(canvas, title, headlines, width, height, null, false, 0); return }
-        val settled = if (visible >= total && wordProgress >= total.toFloat() - .001f) visible else (visible - 1).coerceAtLeast(0)
-        ReelLayout.draw(canvas, title, headlines, width, height, null, false, settled)
-        if (settled >= visible) return
-
-        layer.eraseColor(android.graphics.Color.TRANSPARENT)
-        mask.eraseColor(android.graphics.Color.TRANSPARENT)
-        val layerCanvas = Canvas(layer)
-        ReelLayout.draw(layerCanvas, title, headlines, width, height, null, false, visible)
-        ReelLayout.draw(Canvas(mask), title, headlines, width, height, null, false, settled)
-        layerCanvas.drawBitmap(mask, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
-        })
-
-        val phase = if (visible >= total && wordProgress >= total.toFloat() - .001f) 1f
-            else (wordProgress - kotlin.math.floor(wordProgress.toDouble()).toFloat()).coerceIn(.05f, 1f)
-        val settle = phase * phase * (3f - 2f * phase)
-        val amount = intensityPercent.coerceIn(0, 100) / 100f
-        val save = canvas.save()
-        val alpha = applyTextEffect(canvas, effect, settle, amount, width, height)
-        canvas.drawBitmap(layer, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply { this.alpha = alpha })
-        canvas.restoreToCount(save)
+        ReelLayout.draw(canvas, title, headlines, width, height, null, false, visible)
     }
 
     private fun applyTextEffect(canvas: Canvas, effect: String, settle: Float, amount: Float, width: Int, height: Int): Int {
