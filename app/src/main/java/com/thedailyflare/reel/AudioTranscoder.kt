@@ -5,6 +5,9 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.media.AudioFormat
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import android.net.Uri
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -102,7 +105,11 @@ class AudioTranscoder(private val context: Context) {
      * Mixes the generated TTS voice with the selected background music.
      * Music stays at 20%; voice is kept at full level and starts at 0 seconds.
      */
+    @Volatile var lastError: String? = null
+        private set
+
     fun transcodeMixed(musicUri: Uri, voiceFile: File, output: File, ctaVoiceFile: File? = null): Boolean {
+        lastError = null
         return try {
             val music = decodeToPcm { extractor -> extractor.setDataSource(context, musicUri, null) } ?: return false
             val voice = decodeToPcm { extractor -> extractor.setDataSource(voiceFile.absolutePath) } ?: return false
@@ -129,7 +136,7 @@ class AudioTranscoder(private val context: Context) {
                 i++
             }
             encodePcmToAac(mixed, targetRate, targetChannels, output)
-        } catch (_: Exception) { false }
+        } catch (e: Exception) { lastError = "${e.javaClass.simpleName}: ${e.message ?: "unknown"}"; false }
     }
 
     private data class PcmData(val samples: ShortArray, val sampleRate: Int, val channels: Int)
@@ -153,6 +160,7 @@ class AudioTranscoder(private val context: Context) {
             var outputDone = false
             var sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
             var channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            var pcmEncoding = AudioFormat.ENCODING_PCM_16BIT
             try {
                 while (!outputDone) {
                     if (!inputDone) {
@@ -203,11 +211,28 @@ class AudioTranscoder(private val context: Context) {
                 decoder.release()
             }
             val raw = bytes.toByteArray()
-            val samples = ShortArray(raw.size / 2)
-            var i = 0
-            while (i < samples.size) {
-                samples[i] = (((raw[i * 2 + 1].toInt() shl 8) or (raw[i * 2].toInt() and 0xFF))).toShort()
-                i++
+            val samples = when (pcmEncoding) {
+                AudioFormat.ENCODING_PCM_FLOAT -> {
+                    val count = raw.size / 4
+                    val out = ShortArray(count)
+                    val buffer = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN)
+                    var i = 0
+                    while (i < count) {
+                        out[i] = (buffer.float.coerceIn(-1f, 1f) * 32767f).toInt().coerceIn(-32768, 32767).toShort()
+                        i++
+                    }
+                    out
+                }
+                else -> {
+                    val count = raw.size / 2
+                    val out = ShortArray(count)
+                    var i = 0
+                    while (i < count) {
+                        out[i] = (((raw[i * 2 + 1].toInt() shl 8) or (raw[i * 2].toInt() and 0xFF))).toShort()
+                        i++
+                    }
+                    out
+                }
             }
             return PcmData(samples, sampleRate, channels)
         } finally {
@@ -253,6 +278,8 @@ class AudioTranscoder(private val context: Context) {
             setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
         }
+        if (output.exists()) output.delete()
+        output.parentFile?.mkdirs()
         val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
         val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         var muxerStarted = false
