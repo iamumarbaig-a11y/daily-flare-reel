@@ -78,21 +78,12 @@ class MainActivity : Activity() {
             if (next >= 100) stopVisualPreview(resetIcon = true) else preview.postDelayed(this, 16L)
         }
     }
-    private lateinit var textEffectButton: Button
-    private var selectedTextEffect = "FADE + POP"
-    private var textEffectIntensity = 25
-    private var textRevealMode = "WORD BY WORD"
     // Keep the text preview alive independently of the visual scrubber.
     private var textPreviewAnimating = false
     private var textPreviewStartedAtMs = 0L
     private val textPreviewTick = object : Runnable {
         override fun run() {
             if (!textPreviewAnimating || !::preview.isInitialized) return
-            if (selectedTextEffect == "NONE") {
-                preview.textPreviewProgress = 1f
-                preview.invalidate()
-                return
-            }
             val words = ReelLayout.bodyWordCount(headlineInputs.map { it.text.toString() })
             val duration = (2200L + words * 90L).coerceIn(2200L, 7000L)
             val elapsed = SystemClock.elapsedRealtime() - textPreviewStartedAtMs
@@ -117,9 +108,6 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         preferences = getSharedPreferences("daily_flare_reel_preferences", MODE_PRIVATE)
-        selectedTextEffect = preferences.getString("text_effect", "FADE + POP") ?: "FADE + POP"
-        textEffectIntensity = preferences.getInt("text_effect_intensity", 25)
-        textRevealMode = preferences.getString("text_reveal_mode", "WORD BY WORD") ?: "WORD BY WORD"
         buildUi()
         restorePersistentSelections()
     }
@@ -136,9 +124,6 @@ class MainActivity : Activity() {
         previewFrame = FrameLayout(this)
         preview = ReelPreviewView(this).apply {
             setBackgroundColor(0xFFEFEFEF.toInt())
-            textEffect = selectedTextEffect
-            textEffectIntensity = this@MainActivity.textEffectIntensity
-            textRevealMode = this@MainActivity.textRevealMode
         }
         previewFrame.addView(preview, FrameLayout.LayoutParams(-1, -2))
 
@@ -163,8 +148,6 @@ class MainActivity : Activity() {
         }
         previewControls.addView(visualPreviewPlayButton, LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(12) })
         root.addView(previewControls, lp())
-        textEffectButton = button("TEXT: $selectedTextEffect · ${textEffectIntensity}%") { showTextEffectSettings() }
-        root.addView(textEffectButton, lp())
         root.addView(twoColumnRow(
             "" to button("IMAGE") { pickImages() },
             "" to button("OUTRO") { pickImage(101) }
@@ -232,38 +215,6 @@ class MainActivity : Activity() {
     private fun stopTextPreviewAnimation() {
         textPreviewAnimating = false
         if (::preview.isInitialized) preview.removeCallbacks(textPreviewTick)
-    }
-
-    private fun showTextEffectSettings() {
-        val effects = arrayOf("NONE", "POP", "FADE + POP", "SLIDE UP", "BOUNCE", "BLUR IN", "SLIDE + FADE")
-        val revealModes = arrayOf("WORD BY WORD", "CHARACTER BY CHARACTER", "INSTANT")
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(12)) }
-        root.addView(label("TEXT REVEAL"))
-        val reveal = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, revealModes); setSelection(revealModes.indexOf(textRevealMode).coerceAtLeast(0)) }
-        root.addView(reveal)
-        root.addView(label("TEXT EFFECT"))
-        val spinner = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, effects); setSelection(effects.indexOf(selectedTextEffect).coerceAtLeast(0)) }
-        root.addView(spinner)
-        val intensityLabel = label("INTENSITY: ${textEffectIntensity}%")
-        root.addView(intensityLabel)
-        val intensity = SeekBar(this).apply { max = 100; progress = textEffectIntensity }
-        intensity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) { intensityLabel.text = "INTENSITY: $progress%" }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
-            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
-        })
-        root.addView(intensity)
-        android.app.AlertDialog.Builder(this).setTitle("TEXT ANIMATION").setView(root).setPositiveButton("APPLY") { _, _ ->
-            selectedTextEffect = effects[spinner.selectedItemPosition]
-            textEffectIntensity = intensity.progress
-            textRevealMode = revealModes[reveal.selectedItemPosition]
-            preferences.edit().putString("text_effect", selectedTextEffect).putInt("text_effect_intensity", textEffectIntensity).putString("text_reveal_mode", textRevealMode).apply()
-            textEffectButton.text = "TEXT: $selectedTextEffect · ${textEffectIntensity}%"
-            preview.textEffect = selectedTextEffect
-            preview.textEffectIntensity = textEffectIntensity
-            preview.textRevealMode = textRevealMode
-            startTextPreviewAnimation()
-        }.setNegativeButton("CANCEL", null).show()
     }
 
     private fun refreshWatcher() = object : TextWatcher {
@@ -451,7 +402,7 @@ class MainActivity : Activity() {
         preview.invalidate()
     }
 
-    private fun refreshPreview() { preview.title=titleInput.text.toString().trim().ifBlank { "Main heading" }; preview.headlines=headlineInputs.map{it.text.toString().trim()}; preview.textEffect=selectedTextEffect; preview.textEffectIntensity=textEffectIntensity; preview.textRevealMode=textRevealMode; startTextPreviewAnimation() }
+    private fun refreshPreview() { preview.title=titleInput.text.toString().trim().ifBlank { "Main heading" }; preview.headlines=headlineInputs.map{it.text.toString().trim()}; startTextPreviewAnimation() }
     private fun testVoice() { if (!::voiceTts.isInitialized) return toast("Voice service is still loading"); val selected=selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition) ?: return toast("Select a Kokoro voice first"); val parts=mutableListOf<String>(); val heading=titleInput.text.toString().trim(); if(heading.isNotBlank())parts.add(heading); headlineInputs.map{it.text.toString().trim()}.filter{it.isNotBlank()}.forEach{parts.add(it)}; val speechText=parts.joinToString(". "); if(speechText.isBlank())return toast("Enter a heading or subheading first"); toast("Generating and playing voice..."); val output=File(cacheDir,"daily_flare_voice.wav"); val selectedSpeed=voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition){1.0f}; voiceTts.speakToFile(speechText,selected,output,selectedSpeed){ok,duration->runOnUiThread{if(!ok)toast("Voice generation failed")else{playVoiceFile(output);toast("Playing Kokoro voice at ${selectedSpeed}×: ${duration} ms")}}} }
     private fun getAudioDurationMs(file: File): Long { val retriever=MediaMetadataRetriever(); return try{retriever.setDataSource(file.absolutePath);retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?:0L}catch(_:Exception){0L}finally{try{retriever.release()}catch(_:Exception){}} }
     private fun playVoiceFile(file: File){try{voicePlayer?.release();voicePlayer=MediaPlayer().apply{setDataSource(file.absolutePath);setOnCompletionListener{it.release();voicePlayer=null};prepare();start()}}catch(_:Exception){toast("Voice was generated but could not be played")}}
@@ -483,7 +434,7 @@ val bodyWeight=weights.drop(1).sum().coerceAtLeast(1)
 val titleWeight=weights.firstOrNull()?.coerceAtLeast(0) ?: 0
 val measuredTitleSpeechMs=if (titleWeight > 0) (voiceDurationMs.toDouble()*titleWeight.toDouble()/(titleWeight+bodyWeight).toDouble()).toLong() else 0L
 val measuredHeadlineDurationsMs=headlines.indices.map { index -> (voiceDurationMs-measuredTitleSpeechMs).coerceAtLeast(1L)*weights.getOrElse(index+1){0}.toLong()/bodyWeight.toLong() }
-ReelEncoder(this).encode(backgrounds,cta,title,headlines,voiceDurationMs,measuredTitleSpeechMs,measuredHeadlineDurationsMs,video,imageEffects,imageEffectIntensities,selectedTextEffect,textEffectIntensity,textRevealMode,object:ReelEncoder.Drain{override fun onFrame(frame:Int,total:Int){val percent=20+((frame*60L)/total.coerceAtLeast(1)).toInt();runOnUiThread{updateExportProgress(percent,"Rendering video...")}}});if(!video.exists()||video.length()==0L)throw IllegalStateException("Video rendering produced no output");runOnUiThread{updateExportProgress(82,"Generating Kokoro outro voice...")};val ctaLatch=CountDownLatch(1);var ctaOk=false;voiceTts.speakToFile(ctaText,selectedVoiceOption,ctaVoice,selectedSpeed){ok,_->ctaOk=ok;ctaLatch.countDown()};if(!ctaLatch.await(30,TimeUnit.SECONDS)||!ctaOk||!ctaVoice.exists()||ctaVoice.length()<128L||getAudioDurationMs(ctaVoice)<=0L)throw IllegalStateException("CTA voice generation failed");runOnUiThread{updateExportProgress(88,"Mixing generated voice and music...")};if(!AudioTranscoder(this).transcodeMixed(music,voice,audio,ctaVoice)||!audio.exists()||audio.length()==0L)throw IllegalStateException("Voice and music could not be mixed");runOnUiThread{updateExportProgress(95,"Finalizing video...")};if(!AudioMuxer().mux(video,audio,output)||!output.exists()||output.length()==0L)throw IllegalStateException("Audio/video muxing failed");val savedUri=saveToGallery(output);lastSavedOutputUri=savedUri;runOnUiThread{updateExportProgress(100,if(savedUri!=null)"Export complete ✓"else"Export completed but could not save to gallery",false);if(savedUri!=null)showSharePopup(savedUri)}}catch(e:Exception){runOnUiThread{exportStatus.text="Export failed";toast("Export failed: ${e.message?:"unknown error"}")}}}
+ReelEncoder(this).encode(backgrounds,cta,title,headlines,voiceDurationMs,measuredTitleSpeechMs,measuredHeadlineDurationsMs,video,imageEffects,imageEffectIntensities,"NONE",0,"WORD BY WORD",object:ReelEncoder.Drain{override fun onFrame(frame:Int,total:Int){val percent=20+((frame*60L)/total.coerceAtLeast(1)).toInt();runOnUiThread{updateExportProgress(percent,"Rendering video...")}}});if(!video.exists()||video.length()==0L)throw IllegalStateException("Video rendering produced no output");runOnUiThread{updateExportProgress(82,"Generating Kokoro outro voice...")};val ctaLatch=CountDownLatch(1);var ctaOk=false;voiceTts.speakToFile(ctaText,selectedVoiceOption,ctaVoice,selectedSpeed){ok,_->ctaOk=ok;ctaLatch.countDown()};if(!ctaLatch.await(30,TimeUnit.SECONDS)||!ctaOk||!ctaVoice.exists()||ctaVoice.length()<128L||getAudioDurationMs(ctaVoice)<=0L)throw IllegalStateException("CTA voice generation failed");runOnUiThread{updateExportProgress(88,"Mixing generated voice and music...")};if(!AudioTranscoder(this).transcodeMixed(music,voice,audio,ctaVoice)||!audio.exists()||audio.length()==0L)throw IllegalStateException("Voice and music could not be mixed");runOnUiThread{updateExportProgress(95,"Finalizing video...")};if(!AudioMuxer().mux(video,audio,output)||!output.exists()||output.length()==0L)throw IllegalStateException("Audio/video muxing failed");val savedUri=saveToGallery(output);lastSavedOutputUri=savedUri;runOnUiThread{updateExportProgress(100,if(savedUri!=null)"Export complete ✓"else"Export completed but could not save to gallery",false);if(savedUri!=null)showSharePopup(savedUri)}}catch(e:Exception){runOnUiThread{exportStatus.text="Export failed";toast("Export failed: ${e.message?:"unknown error"}")}}}
     }
 
     private fun saveToGallery(source:File):Uri?{if(!source.exists()||source.length()==0L)return null;return try{if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q){val values=ContentValues().apply{put(MediaStore.Video.Media.DISPLAY_NAME,"daily_flare_reel_${System.currentTimeMillis()}.mp4");put(MediaStore.Video.Media.MIME_TYPE,"video/mp4");put(MediaStore.Video.Media.RELATIVE_PATH,Environment.DIRECTORY_MOVIES+"/Daily Flare Reel");put(MediaStore.Video.Media.IS_PENDING,1)};val uri=contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,values)?:return null;try{contentResolver.openOutputStream(uri)?.use{out->source.inputStream().use{input->input.copyTo(out)}}?:return null;values.clear();values.put(MediaStore.Video.Media.IS_PENDING,0);if(contentResolver.update(uri,values,null,null)>0)uri else null}catch(_:Exception){contentResolver.delete(uri,null,null);null}}else{val dir=File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),"Daily Flare Reel").apply{mkdirs()};val destination=File(dir,"daily_flare_reel_${System.currentTimeMillis()}.mp4");source.copyTo(destination,overwrite=true);sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE,Uri.fromFile(destination)));if(destination.exists()&&destination.length()>0L)Uri.fromFile(destination) else null}}catch(_:Exception){null}}
