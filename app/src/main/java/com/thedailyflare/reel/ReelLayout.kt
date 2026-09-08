@@ -111,12 +111,82 @@ object ReelLayout {
             // line positions. Re-wrapping a growing prefix made existing words jump or
             // briefly disappear whenever the next word pushed a line over its width.
             val fullLines = wrap(headline.trim(), textPaint, maxTextWidth)
-            val lines = revealWordsInFixedLines(fullLines, take)
+            // Draw complete word glyphs at their final positions. Do not redraw a growing
+            // string: that was causing the first glyph of a newly revealed word to look
+            // clipped for a frame on some devices.
+            y += drawWordByWordBlock(
+                canvas, fullLines, take, y, textPaint, white,
+                RIGHT - LEFT, TEXT_PAD_X, TEXT_PAD_Y, TEXT_RADIUS, lineHeight
+            ) + GAP
             remainingWords -= take
-
-            y += drawConnectedTextBlock(canvas, lines, y, textPaint, white, RIGHT - LEFT, TEXT_PAD_X, TEXT_PAD_Y, TEXT_RADIUS, lineHeight) + GAP
             if (y > H - 80f) return
         }
+    }
+
+    /**
+     * Reveals whole words at fixed positions. Each word is drawn independently, so a
+     * newly appearing word can never inherit clipping or partial glyph rendering from
+     * the previous frame.
+     */
+    private fun drawWordByWordBlock(
+        canvas: Canvas,
+        fullLines: List<String>,
+        visibleWords: Int,
+        startY: Float,
+        paint: Paint,
+        bgPaint: Paint,
+        maxWidth: Float,
+        padX: Float,
+        padY: Float,
+        radius: Float,
+        lineHeight: Float
+    ): Float {
+        if (visibleWords <= 0) return 0f
+        val visibleLines = ArrayList<List<String>>()
+        var remaining = visibleWords
+        for (line in fullLines) {
+            if (remaining <= 0) break
+            val words = line.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+            val count = minOf(words.size, remaining)
+            if (count > 0) visibleLines.add(words.take(count))
+            remaining -= count
+            if (count < words.size) break
+        }
+        if (visibleLines.isEmpty()) return 0f
+
+        val rects = ArrayList<RectF>(visibleLines.size)
+        var y = startY
+        for (words in visibleLines) {
+            val visibleText = words.joinToString(" ")
+            val w = minOf(paint.measureText(visibleText) + padX * 2f, maxWidth)
+            val h = lineHeight + padY * 2f
+            rects.add(RectF(LEFT, y, LEFT + w, y + h))
+            y += h + SAME_TEXT_GAP
+        }
+
+        val path = Path()
+        for (i in rects.indices) {
+            val r = rects[i]
+            val tl = if (i == 0) radius else 0f
+            val tr = if (i == 0) radius else 0f
+            val br = if (i == rects.lastIndex) radius else 0f
+            val bl = if (i == rects.lastIndex) radius else 0f
+            path.addRoundRect(r, floatArrayOf(tl, tl, tr, tr, br, br, bl, bl), Path.Direction.CW)
+        }
+        canvas.drawPath(path, bgPaint)
+
+        for (i in visibleLines.indices) {
+            var x = rects[i].left + padX
+            val baseline = rects[i].top + padY + paint.textSize
+            val words = visibleLines[i]
+            for ((wordIndex, word) in words.withIndex()) {
+                canvas.drawText(word, x, baseline, paint)
+                x += paint.measureText(word)
+                if (wordIndex != words.lastIndex) x += paint.measureText(" ")
+            }
+        }
+
+        return rects.sumOf { it.height().toDouble() }.toFloat() + SAME_TEXT_GAP * (rects.size - 1)
     }
 
     private fun drawConnectedTextBlock(
