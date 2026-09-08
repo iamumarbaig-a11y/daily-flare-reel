@@ -108,9 +108,7 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 24, 32, 32) }
         scroll.addView(root)
         previewFrame = FrameLayout(this)
-        preview = ReelPreviewView(this).apply {
-            setBackgroundColor(0xFFEFEFEF.toInt())
-        }
+        preview = ReelPreviewView(this).apply { setBackgroundColor(0xFFEFEFEF.toInt()) }
         previewFrame.addView(preview, FrameLayout.LayoutParams(-1, -2))
         preview.setOnClickListener { preview.playTextPreview() }
 
@@ -129,16 +127,13 @@ class MainActivity : Activity() {
         })
         previewControls.addView(visualPreviewSlider, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         visualPreviewPlayButton = button("▶") { toggleVisualPreview() }.apply {
-            contentDescription = "Play visual preview with cached narration when available"
+            contentDescription = "Play visual preview"
             minHeight = dp(48)
             minWidth = dp(58)
         }
         previewControls.addView(visualPreviewPlayButton, LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(12) })
         root.addView(previewControls, lp())
-        root.addView(twoColumnRow(
-            "" to button("IMAGE") { pickImages() },
-            "" to button("OUTRO") { pickImage(101) }
-        ), lp())
+        root.addView(twoColumnRow("" to button("IMAGE") { pickImages() }, "" to button("OUTRO") { pickImage(101) }), lp())
         mainImageLabel = label("No images selected"); root.addView(mainImageLabel, lp())
         imageStrip = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         root.addView(imageStrip, lp())
@@ -162,7 +157,6 @@ class MainActivity : Activity() {
                 selectedVoice?.name?.let { preferences.edit().putString("voice_name", it).apply() }
             }
         }
-        // Create setup controls before checking Kokoro: initialize() may invoke its callback immediately.
         testButton = button("TEST") { testVoice() }
         openPkgButton = button("OPEN PKG") { startActivity(Intent(this, KokoroExperimentActivity::class.java)) }
         kokoroSetupRow = twoColumnRow("" to testButton, "" to openPkgButton)
@@ -189,9 +183,6 @@ class MainActivity : Activity() {
         override fun afterTextChanged(s: Editable?) = Unit
     }
 
-    // Heading and subheadings never trigger Kokoro in the background.
-    // Narration is generated only when TEST is pressed or when EXPORT REEL starts.
-
     private fun refreshKokoroState() {
         val previousName = selectedVoice?.name
         voiceTts.initialize({ options -> runOnUiThread {
@@ -204,7 +195,6 @@ class MainActivity : Activity() {
             openPkgButton.visibility = android.view.View.GONE
             testButton.visibility = android.view.View.GONE
             kokoroSetupRow.visibility = android.view.View.GONE
-            // Once Kokoro is installed, hide the setup controls and message as well.
             voiceStatus.visibility = android.view.View.GONE
         } }, { error -> runOnUiThread {
             voiceOptions = emptyList(); selectedVoice = null
@@ -328,32 +318,22 @@ class MainActivity : Activity() {
         preview.removeCallbacks(visualPreviewTick)
         preview.post(visualPreviewTick)
     }
-
-    // Preview playback never calls Kokoro. It only plays narration that is already cached.
-    private fun startCachedVoicePreview(startProgress: Int) {
-        // Visual preview never generates Kokoro audio.
-    }
-
+    private fun startCachedVoicePreview(startProgress: Int) { }
     private fun stopPreviewAudio() {
         try { voicePlayer?.stop(); voicePlayer?.release() } catch (_: Exception) {}
         try { ctaPreviewPlayer?.stop(); ctaPreviewPlayer?.release() } catch (_: Exception) {}
-        voicePlayer = null
-        ctaPreviewPlayer = null
+        voicePlayer = null; ctaPreviewPlayer = null
     }
-
     private fun stopVisualPreview(resetIcon: Boolean) {
         visualPreviewPlaying = false
         if (::preview.isInitialized) preview.removeCallbacks(visualPreviewTick)
         stopPreviewAudio()
         if (resetIcon && ::visualPreviewPlayButton.isInitialized) visualPreviewPlayButton.text = "▶"
     }
-
-    // Visual preview uses estimated timing and never generates or caches Kokoro audio.
     private fun visualPreviewDurationMs(): Long {
         val bodyWords = ReelLayout.bodyWordCount(headlineInputs.map { it.text.toString() })
         return (6500L + bodyWords * 220L).coerceIn(6500L, 22000L)
     }
-
     private fun updateVisualPreview(progress: Float) {
         visualPreviewLabel.text = "VISUAL PREVIEW ${(progress * 100).toInt()}%"
         val images = reelBitmaps
@@ -367,33 +347,16 @@ class MainActivity : Activity() {
         preview.showCta = progress >= 0.98f && ctaBitmap != null
         preview.invalidate()
     }
-
     private fun refreshPreview() { preview.title=titleInput.text.toString().trim().ifBlank { "Main heading" }; preview.headlines=headlineInputs.map{it.text.toString().trim()}; preview.textPreviewProgress = 0f; preview.invalidate() }
     private fun testVoice() { if (!::voiceTts.isInitialized) return toast("Voice service is still loading"); val selected=selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition) ?: return toast("Select a Kokoro voice first"); val parts=mutableListOf<String>(); val heading=titleInput.text.toString().trim(); if(heading.isNotBlank())parts.add(heading); headlineInputs.map{it.text.toString().trim()}.filter{it.isNotBlank()}.forEach{parts.add(it)}; val speechText=parts.joinToString(". "); if(speechText.isBlank())return toast("Enter a heading or subheading first"); toast("Generating and playing voice..."); val output=File(cacheDir,"daily_flare_voice.wav"); val selectedSpeed=voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition){1.0f}; voiceTts.speakToFile(speechText,selected,output,selectedSpeed){ok,duration->runOnUiThread{if(!ok)toast("Voice generation failed")else{playVoiceFile(output);toast("Playing Kokoro voice at ${selectedSpeed}×: ${duration} ms")}}} }
     private fun getAudioDurationMs(file: File): Long { val retriever=MediaMetadataRetriever(); return try{retriever.setDataSource(file.absolutePath);retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?:0L}catch(_:Exception){0L}finally{try{retriever.release()}catch(_:Exception){}} }
     private fun playVoiceFile(file: File){try{voicePlayer?.release();voicePlayer=MediaPlayer().apply{setDataSource(file.absolutePath);setOnCompletionListener{it.release();voicePlayer=null};prepare();start()}}catch(_:Exception){toast("Voice was generated but could not be played")}}
-
-    private fun updateExportProgress(percent: Int, stage: String, detailEta: Boolean = true) {
-        val clamped = percent.coerceIn(0, 100)
-        val etaText = if (detailEta && clamped in 1..99 && exportStartedAtMs > 0L) {
-            val elapsedMs = System.currentTimeMillis() - exportStartedAtMs
-            val estimatedTotalMs = (elapsedMs.toDouble() * 100.0 / clamped.toDouble()).toLong()
-            val remainingMs = (estimatedTotalMs - elapsedMs).coerceAtLeast(0L)
-            " • ${formatDuration(remainingMs)} left"
-        } else ""
-        exportProgress.progress = clamped
-        exportStatus.text = "$stage $clamped%$etaText"
-    }
-
-    private fun formatDuration(ms: Long): String {
-        val totalSeconds = ((ms + 999L) / 1000L).toInt().coerceAtLeast(0)
-        return if (totalSeconds < 60) "${totalSeconds}s" else "${totalSeconds / 60}m ${totalSeconds % 60}s"
-    }
-
+    private fun updateExportProgress(percent:Int,stage:String,detailEta:Boolean=true){val clamped=percent.coerceIn(0,100);val etaText=if(detailEta&&clamped in 1..99&&exportStartedAtMs>0L){val elapsedMs=System.currentTimeMillis()-exportStartedAtMs;val estimatedTotalMs=(elapsedMs.toDouble()*100.0/clamped.toDouble()).toLong();val remainingMs=(estimatedTotalMs-elapsedMs).coerceAtLeast(0L);" • ${formatDuration(remainingMs)} left"}else"";exportProgress.progress=clamped;exportStatus.text="$stage $clamped%$etaText"}
+    private fun formatDuration(ms:Long):String{val totalSeconds=((ms+999L)/1000L).toInt().coerceAtLeast(0);return if(totalSeconds<60)"${totalSeconds}s" else "${totalSeconds/60}m ${totalSeconds%60}s"}
     private fun exportReel(){
         val backgrounds=reelBitmaps.ifEmpty{listOfNotNull(mainBitmap)}; if(backgrounds.isEmpty())return toast("Choose at least one image"); val cta=ctaBitmap?:return toast("Choose the outro image"); val music=musicUri?:return toast("Choose music")
         val title=titleInput.text.toString().trim().ifBlank{"Main heading"}; val headlines=headlineInputs.map{it.text.toString().trim()}; exportStartedAtMs=System.currentTimeMillis(); lastSavedOutputUri=null; updateExportProgress(0,"Preparing export...",false); toast("Starting export")
-        thread(name="daily-flare-export"){try{val video=File(cacheDir,"daily_flare_video.mp4");var voice=File(cacheDir,"daily_flare_export_voice.wav");var ctaVoice=File(cacheDir,"daily_flare_cta_voice.wav");val audio=File(cacheDir,"daily_flare_mixed_audio_aac.mp4");val output=File(cacheDir,"daily_flare_reel_18s.mp4");video.delete();voice.delete();ctaVoice.delete();audio.delete();output.delete(); val speechParts=mutableListOf<String>();if(title.isNotBlank())speechParts.add(title);headlines.filter{it.isNotBlank()}.forEach{speechParts.add(it)};val speechText=speechParts.joinToString(". ");if(speechText.isBlank())throw IllegalStateException("Enter a heading or subheading for the voice");val selectedVoiceOption=this@MainActivity.selectedVoice?:voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?:throw IllegalStateException("Select a Kokoro voice first");if(!::voiceTts.isInitialized)throw IllegalStateException("Kokoro voice service is not ready");val selectedSpeed=voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition){1.0f};runOnUiThread{updateExportProgress(2,"Loading Kokoro model...")};val voiceGenerationStartedAt=System.currentTimeMillis();runOnUiThread{updateExportProgress(4,"Generating Kokoro narration...")};val voiceLatch=CountDownLatch(1);var voiceOk=false;voiceTts.speakToFile(speechText,selectedVoiceOption,voice,selectedSpeed){ok,_->voiceOk=ok;voiceLatch.countDown()};if(!voiceLatch.await(60,TimeUnit.SECONDS)||!voiceOk||!voice.exists()||voice.length()<128L||voice.lastModified()<voiceGenerationStartedAt)throw IllegalStateException("Kokoro voice generation failed");val voiceDurationMs=getAudioDurationMs(voice);if(voiceDurationMs<=0L)throw IllegalStateException("Generated Kokoro narration has no duration");runOnUiThread{updateExportProgress(8,"Kokoro narration generated",false)};// Derive visual segment timing from the already generated narration. No additional Kokoro calls.
+        thread(name="daily-flare-export"){try{val video=File(cacheDir,"daily_flare_video.mp4");var voice=File(cacheDir,"daily_flare_export_voice.wav");var ctaVoice=File(cacheDir,"daily_flare_cta_voice.wav");val audio=File(cacheDir,"daily_flare_mixed_audio_aac.mp4");val output=File(cacheDir,"daily_flare_reel_18s.mp4");video.delete();voice.delete();ctaVoice.delete();audio.delete();output.delete(); val speechParts=mutableListOf<String>();if(title.isNotBlank())speechParts.add(title);headlines.filter{it.isNotBlank()}.forEach{speechParts.add(it)};val speechText=speechParts.joinToString(". ");if(speechText.isBlank())throw IllegalStateException("Enter a heading or subheading for the voice");val selectedVoiceOption=this@MainActivity.selectedVoice?:voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?:throw IllegalStateException("Select a Kokoro voice first");if(!::voiceTts.isInitialized)throw IllegalStateException("Kokoro voice service is not ready");val selectedSpeed=voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition){1.0f};runOnUiThread{updateExportProgress(2,"Loading Kokoro model...")};val voiceGenerationStartedAt=System.currentTimeMillis();runOnUiThread{updateExportProgress(4,"Generating Kokoro narration...")};val voiceLatch=CountDownLatch(1);var voiceOk=false;voiceTts.speakToFile(speechText,selectedVoiceOption,voice,selectedSpeed){ok,_->voiceOk=ok;voiceLatch.countDown()};if(!voiceLatch.await(60,TimeUnit.SECONDS)||!voiceOk||!voice.exists()||voice.length()<128L||voice.lastModified()<voiceGenerationStartedAt)throw IllegalStateException("Kokoro voice generation failed");val voiceDurationMs=getAudioDurationMs(voice);if(voiceDurationMs<=0L)throw IllegalStateException("Generated Kokoro narration has no duration");runOnUiThread{updateExportProgress(8,"Kokoro narration generated",false)};
 val timingTexts=listOf(title)+headlines
 val weights=timingTexts.map { it.trim().split(Regex("\\s+")).count { word -> word.isNotBlank() }.coerceAtLeast(0) }
 val bodyWeight=weights.drop(1).sum().coerceAtLeast(1)
@@ -402,26 +365,8 @@ val measuredTitleSpeechMs=if (titleWeight > 0) (voiceDurationMs.toDouble()*title
 val measuredHeadlineDurationsMs=headlines.indices.map { index -> (voiceDurationMs-measuredTitleSpeechMs).coerceAtLeast(1L)*weights.getOrElse(index+1){0}.toLong()/bodyWeight.toLong() }
 ReelEncoder(this).encode(backgrounds,cta,title,headlines,voiceDurationMs,measuredTitleSpeechMs,measuredHeadlineDurationsMs,video,imageEffects,imageEffectIntensities,"NONE",0,"WORD BY WORD",object:ReelEncoder.Drain{override fun onFrame(frame:Int,total:Int){val percent=20+((frame*60L)/total.coerceAtLeast(1)).toInt();runOnUiThread{updateExportProgress(percent,"Rendering video...")}}});if(!video.exists()||video.length()==0L)throw IllegalStateException("Video rendering produced no output");runOnUiThread{updateExportProgress(82,"Generating Kokoro outro voice...")};val ctaLatch=CountDownLatch(1);var ctaOk=false;voiceTts.speakToFile(ctaText,selectedVoiceOption,ctaVoice,selectedSpeed){ok,_->ctaOk=ok;ctaLatch.countDown()};if(!ctaLatch.await(30,TimeUnit.SECONDS)||!ctaOk||!ctaVoice.exists()||ctaVoice.length()<128L||getAudioDurationMs(ctaVoice)<=0L)throw IllegalStateException("CTA voice generation failed");runOnUiThread{updateExportProgress(88,"Mixing generated voice and music...")};if(!AudioTranscoder(this).transcodeMixed(music,voice,audio,ctaVoice)||!audio.exists()||audio.length()==0L)throw IllegalStateException("Voice and music could not be mixed");runOnUiThread{updateExportProgress(95,"Finalizing video...")};if(!AudioMuxer().mux(video,audio,output)||!output.exists()||output.length()==0L)throw IllegalStateException("Audio/video muxing failed");val savedUri=saveToGallery(output);lastSavedOutputUri=savedUri;runOnUiThread{updateExportProgress(100,if(savedUri!=null)"Export complete ✓"else"Export completed but could not save to gallery",false);if(savedUri!=null)showSharePopup(savedUri)}}catch(e:Exception){runOnUiThread{exportStatus.text="Export failed";toast("Export failed: ${e.message?:"unknown error"}")}}}
     }
-
     private fun saveToGallery(source:File):Uri?{if(!source.exists()||source.length()==0L)return null;return try{if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q){val values=ContentValues().apply{put(MediaStore.Video.Media.DISPLAY_NAME,"daily_flare_reel_${System.currentTimeMillis()}.mp4");put(MediaStore.Video.Media.MIME_TYPE,"video/mp4");put(MediaStore.Video.Media.RELATIVE_PATH,Environment.DIRECTORY_MOVIES+"/Daily Flare Reel");put(MediaStore.Video.Media.IS_PENDING,1)};val uri=contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,values)?:return null;try{contentResolver.openOutputStream(uri)?.use{out->source.inputStream().use{input->input.copyTo(out)}}?:return null;values.clear();values.put(MediaStore.Video.Media.IS_PENDING,0);if(contentResolver.update(uri,values,null,null)>0)uri else null}catch(_:Exception){contentResolver.delete(uri,null,null);null}}else{val dir=File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),"Daily Flare Reel").apply{mkdirs()};val destination=File(dir,"daily_flare_reel_${System.currentTimeMillis()}.mp4");source.copyTo(destination,overwrite=true);sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE,Uri.fromFile(destination)));if(destination.exists()&&destination.length()>0L)Uri.fromFile(destination) else null}}catch(_:Exception){null}}
-
-    private fun showSharePopup(uri: Uri) {
-        val message = "Your Daily Flare Reel is ready."
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Export complete")
-            .setMessage(message)
-            .setNegativeButton("CLOSE", null)
-            .setPositiveButton("SHARE") { _, _ ->
-                val share = Intent(Intent.ACTION_SEND).apply {
-                    type = "video/mp4"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                startActivity(Intent.createChooser(share, "Share Daily Flare Reel"))
-            }
-            .show()
-    }
-
-    override fun onDestroy(){stopVisualPreview(resetIcon = false);voicePlayer?.release();voicePlayer=null;if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
+    private fun showSharePopup(uri:Uri){android.app.AlertDialog.Builder(this).setTitle("Export complete").setMessage("Your Daily Flare Reel is ready.").setNegativeButton("CLOSE",null).setPositiveButton("SHARE"){_,_->startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply{type="video/mp4";putExtra(Intent.EXTRA_STREAM,uri);addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)},"Share Daily Flare Reel"))}.show()}
+    override fun onDestroy(){stopVisualPreview(resetIcon=false);voicePlayer?.release();voicePlayer=null;if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
     private fun toast(message:String)=Toast.makeText(this,message,Toast.LENGTH_LONG).show()
 }
