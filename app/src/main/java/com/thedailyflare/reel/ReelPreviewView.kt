@@ -25,14 +25,6 @@ class ReelPreviewView(context: Context) : View(context) {
         super.onDraw(canvas)
         val image = if (showCta) ctaBitmap else backgroundBitmap
         image?.let { ReelLayout.drawCover(canvas, it, width, height) }
-        // NONE means exactly that: render the normal text layout with no
-        // per-word reveal/effect layer. This avoids the first-word jump caused
-        // by the animated mask path.
-        if (showCta) return
-        if (textEffect == "NONE") {
-            ReelLayout.draw(canvas, title, headlines, width, height, null, false)
-            return
-        }
-        ReelLayout.draw(canvas, title, headlines, width, height, null, false)
+        ReelLayout.draw(canvas, title, headlines, width, height, ctaBitmap, showCta)
     }
 }
