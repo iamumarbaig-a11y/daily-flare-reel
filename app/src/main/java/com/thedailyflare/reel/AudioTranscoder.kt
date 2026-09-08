@@ -190,6 +190,7 @@ class AudioTranscoder(private val context: Context) {
                             val out = decoder.outputFormat
                             if (out.containsKey(MediaFormat.KEY_SAMPLE_RATE)) sampleRate = out.getInteger(MediaFormat.KEY_SAMPLE_RATE)
                             if (out.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) channels = out.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                            if (out.containsKey(MediaFormat.KEY_PCM_ENCODING)) pcmEncoding = out.getInteger(MediaFormat.KEY_PCM_ENCODING)
                         }
                         else -> if (index >= 0) {
                             val buffer = decoder.getOutputBuffer(index)
