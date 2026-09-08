@@ -82,6 +82,25 @@ class MainActivity : Activity() {
     private var selectedTextEffect = "FADE + POP"
     private var textEffectIntensity = 25
     private var textRevealMode = "WORD BY WORD"
+    // Keep the text preview alive independently of the visual scrubber.
+    private var textPreviewAnimating = false
+    private var textPreviewStartedAtMs = 0L
+    private val textPreviewTick = object : Runnable {
+        override fun run() {
+            if (!textPreviewAnimating || !::preview.isInitialized) return
+            if (selectedTextEffect == "NONE") {
+                preview.textPreviewProgress = 1f
+                preview.invalidate()
+                return
+            }
+            val words = ReelLayout.bodyWordCount(headlineInputs.map { it.text.toString() })
+            val duration = (2200L + words * 90L).coerceIn(2200L, 7000L)
+            val elapsed = SystemClock.elapsedRealtime() - textPreviewStartedAtMs
+            preview.textPreviewProgress = (elapsed % duration).toFloat() / duration.toFloat()
+            preview.invalidate()
+            preview.postDelayed(this, 16L)
+        }
+    }
     private var mainBitmap: Bitmap? = null
     private val reelBitmaps = mutableListOf<Bitmap>()
     private val imageEffects = mutableListOf<ReelEncoder.ImageEffect>()
@@ -192,6 +211,27 @@ class MainActivity : Activity() {
         root.addView(exportProgress, lp())
         root.addView(button("EXPORT REEL") { exportReel() }, lp())
         setContentView(scroll)
+        startTextPreviewAnimation()
+    }
+
+    private fun startTextPreviewAnimation() {
+        if (!::preview.isInitialized) return
+        preview.removeCallbacks(textPreviewTick)
+        if (selectedTextEffect == "NONE") {
+            textPreviewAnimating = false
+            preview.textPreviewProgress = 1f
+            preview.invalidate()
+            return
+        }
+        textPreviewAnimating = true
+        textPreviewStartedAtMs = SystemClock.elapsedRealtime()
+        preview.textPreviewProgress = 0f
+        preview.post(textPreviewTick)
+    }
+
+    private fun stopTextPreviewAnimation() {
+        textPreviewAnimating = false
+        if (::preview.isInitialized) preview.removeCallbacks(textPreviewTick)
     }
 
     private fun showTextEffectSettings() {
@@ -222,7 +262,7 @@ class MainActivity : Activity() {
             preview.textEffect = selectedTextEffect
             preview.textEffectIntensity = textEffectIntensity
             preview.textRevealMode = textRevealMode
-            preview.invalidate()
+            startTextPreviewAnimation()
         }.setNegativeButton("CANCEL", null).show()
     }
 
@@ -411,7 +451,7 @@ class MainActivity : Activity() {
         preview.invalidate()
     }
 
-    private fun refreshPreview() { preview.title=titleInput.text.toString().trim().ifBlank { "Main heading" }; preview.headlines=headlineInputs.map{it.text.toString().trim()}; preview.textEffect=selectedTextEffect; preview.textEffectIntensity=textEffectIntensity; preview.textRevealMode=textRevealMode; preview.invalidate() }
+    private fun refreshPreview() { preview.title=titleInput.text.toString().trim().ifBlank { "Main heading" }; preview.headlines=headlineInputs.map{it.text.toString().trim()}; preview.textEffect=selectedTextEffect; preview.textEffectIntensity=textEffectIntensity; preview.textRevealMode=textRevealMode; startTextPreviewAnimation() }
     private fun testVoice() { if (!::voiceTts.isInitialized) return toast("Voice service is still loading"); val selected=selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition) ?: return toast("Select a Kokoro voice first"); val parts=mutableListOf<String>(); val heading=titleInput.text.toString().trim(); if(heading.isNotBlank())parts.add(heading); headlineInputs.map{it.text.toString().trim()}.filter{it.isNotBlank()}.forEach{parts.add(it)}; val speechText=parts.joinToString(". "); if(speechText.isBlank())return toast("Enter a heading or subheading first"); toast("Generating and playing voice..."); val output=File(cacheDir,"daily_flare_voice.wav"); val selectedSpeed=voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition){1.0f}; voiceTts.speakToFile(speechText,selected,output,selectedSpeed){ok,duration->runOnUiThread{if(!ok)toast("Voice generation failed")else{playVoiceFile(output);toast("Playing Kokoro voice at ${selectedSpeed}×: ${duration} ms")}}} }
     private fun getAudioDurationMs(file: File): Long { val retriever=MediaMetadataRetriever(); return try{retriever.setDataSource(file.absolutePath);retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?:0L}catch(_:Exception){0L}finally{try{retriever.release()}catch(_:Exception){}} }
     private fun playVoiceFile(file: File){try{voicePlayer?.release();voicePlayer=MediaPlayer().apply{setDataSource(file.absolutePath);setOnCompletionListener{it.release();voicePlayer=null};prepare();start()}}catch(_:Exception){toast("Voice was generated but could not be played")}}
@@ -465,6 +505,6 @@ ReelEncoder(this).encode(backgrounds,cta,title,headlines,voiceDurationMs,measure
             .show()
     }
 
-    override fun onDestroy(){stopVisualPreview(resetIcon = false);voicePlayer?.release();voicePlayer=null;if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
+    override fun onDestroy(){stopVisualPreview(resetIcon = false);stopTextPreviewAnimation();voicePlayer?.release();voicePlayer=null;if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
     private fun toast(message:String)=Toast.makeText(this,message,Toast.LENGTH_LONG).show()
 }
