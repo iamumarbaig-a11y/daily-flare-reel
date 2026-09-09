@@ -5,6 +5,9 @@ on:
     branches: [ main, kokoro-experimental ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,7 +32,7 @@ jobs:
           curl -L --fail --retry 3 -o app/libs/sherpa-onnx-1.13.7.aar https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.7/sherpa-onnx-1.13.7.aar
       - name: Build debug APK
         run: gradle --version && gradle assembleDebug --stacktrace
-      - name: Upload APK
+      - name: Upload APK artifact
         if: success()
         continue-on-error: true
         uses: actions/upload-artifact@v4
@@ -37,3 +40,14 @@ jobs:
           name: daily-flare-reel-kokoro-experimental-v44
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 1
+      - name: Publish APK to GitHub Release
+        if: success() && github.ref == 'refs/heads/kokoro-experimental'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK=$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          test -n "$APK"
+          gh release create "kokoro-v44-${{ github.run_id }}" "$APK" \
+            --repo "${{ github.repository }}" \
+            --title "Daily Flare Reel Kokoro v44 — build ${{ github.run_number }}" \
+            --notes "APK build from kokoro-experimental commit ${{ github.sha }}."
