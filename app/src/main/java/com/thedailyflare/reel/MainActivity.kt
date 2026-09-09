@@ -60,6 +60,7 @@ class MainActivity : Activity() {
     private var voiceOptions = emptyList<VoiceTts.VoiceOption>()
     private var selectedVoice: VoiceTts.VoiceOption? = null
     private lateinit var titleInput: EditText
+    private lateinit var bulkHeadingsInput: EditText
     private val headlineInputs = mutableListOf<EditText>()
     private lateinit var previewFrame: FrameLayout
     private lateinit var visualPreviewSlider: SeekBar
@@ -150,6 +151,12 @@ class MainActivity : Activity() {
         speedSpinner.onItemSelectedListener = simpleSelectionListener { position -> preferences.edit().putFloat("voice_speed", voiceSpeeds.getOrElse(position) { 1.0f }).apply() }
         root.addView(twoColumnRow("VOICE" to voiceSpinner, "SPEED" to speedSpinner), lp())
         root.addView(voiceStatus, lp())
+
+        root.addView(label("PASTE ALL 7 HEADINGS"), lp())
+        bulkHeadingsInput = edit("Paste the 7 numbered headings here", 8)
+        root.addView(bulkHeadingsInput, lp())
+        root.addView(button("DISTRIBUTE TO FIELDS") { distributeBulkHeadings() }, lp())
+
         root.addView(titleInput, lp())
         headlineInputs.forEach { root.addView(it, lp()) }
         voiceTts = VoiceTts(this)
@@ -184,6 +191,27 @@ class MainActivity : Activity() {
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { refreshPreview() }
         override fun afterTextChanged(s: Editable?) = Unit
+    }
+
+    private fun distributeBulkHeadings() {
+        val lines = bulkHeadingsInput.text.toString()
+            .lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { it.replace(Regex("^\\d+[.)]\\s*"), "") }
+            .filter { it.isNotBlank() }
+
+        if (lines.size != 7) {
+            toast("Expected exactly 7 headings, found ${lines.size}")
+            return
+        }
+
+        titleInput.setText(lines[0])
+        headlineInputs.forEachIndexed { index, input ->
+            input.setText(lines.getOrNull(index + 1).orEmpty())
+        }
+        refreshPreview()
+        toast("7 headings distributed to the fields")
     }
 
     private fun refreshKokoroState() {
