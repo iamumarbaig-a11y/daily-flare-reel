@@ -15,7 +15,7 @@ import java.io.File
 /** Decodes selected music and re-encodes it as AAC so MP4 muxing is reliable. */
 class AudioTranscoder(private val context: Context) {
     companion object {
-        private const val DEFAULT_MUSIC_VOLUME = 0.10f
+        private const val DEFAULT_MUSIC_VOLUME = 0.05f
         private const val MUSIC_INTENSITY_PREFS = "daily_flare_reel_preferences"
         private const val MUSIC_INTENSITY_KEY = "music_intensity"
     }
@@ -23,7 +23,7 @@ class AudioTranscoder(private val context: Context) {
     private fun selectedMusicVolume(): Float {
         val percent = context
             .getSharedPreferences(MUSIC_INTENSITY_PREFS, Context.MODE_PRIVATE)
-            .getInt(MUSIC_INTENSITY_KEY, 10)
+            .getInt(MUSIC_INTENSITY_KEY, 5)
             .coerceIn(0, 100)
         return percent / 100f
     }
@@ -42,7 +42,6 @@ class AudioTranscoder(private val context: Context) {
                 val decoder = MediaCodec.createDecoderByType(mime)
                 decoder.configure(inputFormat, null, null, 0)
                 decoder.start()
-
                 val pcm = ByteArrayOutputStream()
                 val info = MediaCodec.BufferInfo()
                 var inputDone = false
@@ -50,7 +49,6 @@ class AudioTranscoder(private val context: Context) {
                 var sampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
                 var channels = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
                 val musicVolume = selectedMusicVolume()
-
                 try {
                     while (!outputDone) {
                         if (!inputDone) {
@@ -74,7 +72,6 @@ class AudioTranscoder(private val context: Context) {
                                 }
                             }
                         }
-
                         when (val index = decoder.dequeueOutputBuffer(info, 10_000)) {
                             MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
                             MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
@@ -102,7 +99,6 @@ class AudioTranscoder(private val context: Context) {
                     try { decoder.stop() } catch (_: Exception) { }
                     decoder.release()
                 }
-
                 if (pcm.size() == 0) return false
                 encodePcmToAac(pcm.toByteArray(), sampleRate, channels, output)
             } finally {
@@ -111,11 +107,7 @@ class AudioTranscoder(private val context: Context) {
         } catch (_: Exception) { false }
     }
 
-    /**
-     * Mixes the generated TTS voice with the selected background music.
-     * Music level follows the editor's 5/10/15/20% intensity setting;
-     * voice remains at full level.
-     */
+    /** Mixes generated TTS voice with music at the persisted editor intensity. */
     @Volatile var lastError: String? = null
         private set
 
@@ -131,8 +123,6 @@ class AudioTranscoder(private val context: Context) {
             val voiceSamples = toTarget(voice, targetRate, targetChannels)
             val ctaSamples = ctaVoice?.let { toTarget(it, targetRate, targetChannels) } ?: ShortArray(0)
             val musicVolume = selectedMusicVolume()
-
-            // Main narration followed by CTA speech; silence naturally fills any remaining CTA time.
             val totalSamples = voiceSamples.size + ctaSamples.size
             val mixed = ByteArray(totalSamples * 2)
             var i = 0
@@ -273,7 +263,6 @@ class AudioTranscoder(private val context: Context) {
         return result
     }
 
-    /** PCM output from the Android decoder is 16-bit signed little-endian. */
     private fun scalePcm16(data: ByteArray, volume: Float) {
         var i = 0
         while (i + 1 < data.size) {
@@ -303,7 +292,6 @@ class AudioTranscoder(private val context: Context) {
         var outputEos = false
         var wrote = false
         val info = MediaCodec.BufferInfo()
-
         try {
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             encoder.start()
@@ -327,7 +315,6 @@ class AudioTranscoder(private val context: Context) {
                         }
                     }
                 }
-
                 when (val index = encoder.dequeueOutputBuffer(info, 10_000)) {
                     MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
                     MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
