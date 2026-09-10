@@ -11,12 +11,21 @@ import java.nio.ByteOrder
 import android.net.Uri
 import java.io.ByteArrayOutputStream
 import java.io.File
-import kotlin.math.floor
 
 /** Decodes selected music and re-encodes it as AAC so MP4 muxing is reliable. */
 class AudioTranscoder(private val context: Context) {
     companion object {
-        private const val MUSIC_VOLUME = 0.10f
+        private const val DEFAULT_MUSIC_VOLUME = 0.10f
+        private const val MUSIC_INTENSITY_PREFS = "daily_flare_reel_preferences"
+        private const val MUSIC_INTENSITY_KEY = "music_intensity"
+    }
+
+    private fun selectedMusicVolume(): Float {
+        val percent = context
+            .getSharedPreferences(MUSIC_INTENSITY_PREFS, Context.MODE_PRIVATE)
+            .getInt(MUSIC_INTENSITY_KEY, 10)
+            .coerceIn(0, 100)
+        return percent / 100f
     }
 
     fun transcode(uri: Uri, output: File): Boolean {
@@ -40,6 +49,7 @@ class AudioTranscoder(private val context: Context) {
                 var outputDone = false
                 var sampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
                 var channels = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                val musicVolume = selectedMusicVolume()
 
                 try {
                     while (!outputDone) {
@@ -80,7 +90,7 @@ class AudioTranscoder(private val context: Context) {
                                     buffer.limit(info.offset + info.size)
                                     val temp = ByteArray(info.size)
                                     buffer.get(temp)
-                                    scalePcm16(temp, MUSIC_VOLUME)
+                                    scalePcm16(temp, musicVolume)
                                     pcm.write(temp)
                                 }
                                 decoder.releaseOutputBuffer(index, false)
@@ -103,7 +113,8 @@ class AudioTranscoder(private val context: Context) {
 
     /**
      * Mixes the generated TTS voice with the selected background music.
-     * Music stays at 20%; voice is kept at full level and starts at 0 seconds.
+     * Music level follows the editor's 5/10/15/20% intensity setting;
+     * voice remains at full level.
      */
     @Volatile var lastError: String? = null
         private set
@@ -119,12 +130,14 @@ class AudioTranscoder(private val context: Context) {
             val musicSamples = toTarget(music, targetRate, targetChannels)
             val voiceSamples = toTarget(voice, targetRate, targetChannels)
             val ctaSamples = ctaVoice?.let { toTarget(it, targetRate, targetChannels) } ?: ShortArray(0)
+            val musicVolume = selectedMusicVolume()
+
             // Main narration followed by CTA speech; silence naturally fills any remaining CTA time.
             val totalSamples = voiceSamples.size + ctaSamples.size
             val mixed = ByteArray(totalSamples * 2)
             var i = 0
             while (i < totalSamples) {
-                val musicValue = if (musicSamples.isNotEmpty()) (musicSamples[i % musicSamples.size] * MUSIC_VOLUME).toInt() else 0
+                val musicValue = if (musicSamples.isNotEmpty()) (musicSamples[i % musicSamples.size] * musicVolume).toInt() else 0
                 val voiceValue = when {
                     i < voiceSamples.size -> voiceSamples[i].toInt()
                     i - voiceSamples.size < ctaSamples.size -> ctaSamples[i - voiceSamples.size].toInt()
