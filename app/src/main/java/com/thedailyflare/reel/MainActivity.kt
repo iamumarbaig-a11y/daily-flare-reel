@@ -81,15 +81,14 @@ class MainActivity : Activity() {
     }
     private var mainBitmap: Bitmap? = null
     private val reelBitmaps = mutableListOf<Bitmap>()
-    // Temporary editor state only; never written to preferences.
     private val reelImageUris = mutableListOf<Uri>()
     private val imageEffects = mutableListOf<ReelEncoder.ImageEffect>()
     private val imageEffectIntensities = mutableListOf<Float>()
     private var ctaBitmap: Bitmap? = null
     private var musicUri: Uri? = null
-    private lateinit var musicIntensitySpinner: Spinner
+    private lateinit var musicIntensitySlider: SeekBar
+    private lateinit var musicIntensityLabel: TextView
     private lateinit var preferences: SharedPreferences
-    private val musicIntensities = listOf(5, 10, 15, 20)
 
     private var lastSavedOutputUri: Uri? = null
     private var exportStartedAtMs: Long = 0L
@@ -130,11 +129,7 @@ class MainActivity : Activity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
         })
         previewControls.addView(visualPreviewSlider, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        visualPreviewPlayButton = button("▶") { toggleVisualPreview() }.apply {
-            contentDescription = "Play visual preview"
-            minHeight = dp(48)
-            minWidth = dp(58)
-        }
+        visualPreviewPlayButton = button("▶") { toggleVisualPreview() }.apply { contentDescription = "Play visual preview"; minHeight = dp(48); minWidth = dp(58) }
         previewControls.addView(visualPreviewPlayButton, LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(12) })
         root.addView(previewControls, lp())
         root.addView(twoColumnRow("" to button("IMAGE") { pickImages() }, "" to button("OUTRO") { pickImage(101) }), lp())
@@ -151,12 +146,10 @@ class MainActivity : Activity() {
         speedSpinner.onItemSelectedListener = simpleSelectionListener { position -> preferences.edit().putFloat("voice_speed", voiceSpeeds.getOrElse(position) { 1.0f }).apply() }
         root.addView(twoColumnRow("VOICE" to voiceSpinner, "SPEED" to speedSpinner), lp())
         root.addView(voiceStatus, lp())
-
         root.addView(label("PASTE ALL 7 HEADINGS"), lp())
         bulkHeadingsInput = edit("Paste the 7 numbered headings here", 8)
         root.addView(bulkHeadingsInput, lp())
         root.addView(button("DISTRIBUTE TO FIELDS") { distributeBulkHeadings() }, lp())
-
         root.addView(titleInput, lp())
         headlineInputs.forEach { root.addView(it, lp()) }
         voiceTts = VoiceTts(this)
@@ -172,13 +165,29 @@ class MainActivity : Activity() {
         kokoroSetupRow = twoColumnRow("" to testButton, "" to openPkgButton)
         root.addView(kokoroSetupRow, lp())
         refreshKokoroState()
+
         section(root, "4. MUSIC")
-        musicIntensitySpinner = Spinner(this)
-        musicIntensitySpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, musicIntensities.map { "$it%" })
-        val savedMusicIntensity = preferences.getInt("music_intensity", 10)
-        musicIntensitySpinner.setSelection(musicIntensities.indexOf(savedMusicIntensity).takeIf { it >= 0 } ?: 1, false)
-        musicIntensitySpinner.onItemSelectedListener = simpleSelectionListener { position -> preferences.edit().putInt("music_intensity", musicIntensities.getOrElse(position) { 10 }).apply() }
-        root.addView(twoColumnRow("MUSIC" to button("CHOOSE MUSIC") { pickAudio() }, "INTENSITY" to musicIntensitySpinner), lp())
+        val musicControls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        musicControls.addView(button("CHOOSE MUSIC") { pickAudio() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
+        musicIntensityLabel = label("5%")
+        musicControls.addView(musicIntensityLabel, LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER_VERTICAL })
+        root.addView(musicControls, lp())
+        musicIntensitySlider = SeekBar(this).apply {
+            max = 19
+            val saved = preferences.getInt("music_intensity", 5).coerceIn(1, 20)
+            progress = saved - 1
+            musicIntensityLabel.text = "$saved%"
+        }
+        musicIntensitySlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val value = (progress + 1).coerceIn(1, 20)
+                musicIntensityLabel.text = "$value%"
+                if (fromUser) preferences.edit().putInt("music_intensity", value).apply()
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+        })
+        root.addView(musicIntensitySlider, lp())
         musicLabel = label("No music selected"); root.addView(musicLabel, lp())
         exportStatus = label("Ready to export"); root.addView(exportStatus, lp())
         exportProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0 }
@@ -194,24 +203,11 @@ class MainActivity : Activity() {
     }
 
     private fun distributeBulkHeadings() {
-        val lines = bulkHeadingsInput.text.toString()
-            .lines()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .map { it.replace(Regex("^\\d+[.)]\\s*"), "") }
-            .filter { it.isNotBlank() }
-
-        if (lines.size != 7) {
-            toast("Expected exactly 7 headings, found ${lines.size}")
-            return
-        }
-
+        val lines = bulkHeadingsInput.text.toString().lines().map { it.trim() }.filter { it.isNotEmpty() }.map { it.replace(Regex("^\\d+[.)]\\s*"), "") }.filter { it.isNotBlank() }
+        if (lines.size != 7) { toast("Expected exactly 7 headings, found ${lines.size}"); return }
         titleInput.setText(lines[0])
-        headlineInputs.forEachIndexed { index, input ->
-            input.setText(lines.getOrNull(index + 1).orEmpty())
-        }
-        refreshPreview()
-        toast("7 headings distributed to the fields")
+        headlineInputs.forEachIndexed { index, input -> input.setText(lines.getOrNull(index + 1).orEmpty()) }
+        refreshPreview(); toast("7 headings distributed to the fields")
     }
 
     private fun refreshKokoroState() {
@@ -223,39 +219,22 @@ class MainActivity : Activity() {
             val restoredIndex = options.indexOfFirst { it.name == (persistedVoiceName ?: previousName) }.takeIf { it >= 0 } ?: 0
             if (options.isNotEmpty()) { voiceSpinner.setSelection(restoredIndex, false); selectedVoice = options[restoredIndex] } else selectedVoice = null
             voiceStatus.text = "Kokoro is ready locally — ${options.size} voices available"
-            openPkgButton.visibility = android.view.View.GONE
-            testButton.visibility = android.view.View.GONE
-            kokoroSetupRow.visibility = android.view.View.GONE
-            voiceStatus.visibility = android.view.View.GONE
+            openPkgButton.visibility = android.view.View.GONE; testButton.visibility = android.view.View.GONE; kokoroSetupRow.visibility = android.view.View.GONE; voiceStatus.visibility = android.view.View.GONE
         } }, { error -> runOnUiThread {
             voiceOptions = emptyList(); selectedVoice = null
             voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, emptyList<String>())
-            voiceStatus.text = error
-            voiceStatus.visibility = android.view.View.VISIBLE
-            openPkgButton.visibility = android.view.View.VISIBLE
-            testButton.visibility = android.view.View.VISIBLE
-            kokoroSetupRow.visibility = android.view.View.VISIBLE
+            voiceStatus.text = error; voiceStatus.visibility = android.view.View.VISIBLE; openPkgButton.visibility = android.view.View.VISIBLE; testButton.visibility = android.view.View.VISIBLE; kokoroSetupRow.visibility = android.view.View.VISIBLE
         } })
     }
 
     private fun edit(hint: String, lines: Int) = EditText(this).apply { this.hint = hint; setSingleLine(lines == 1); maxLines = lines; textSize = 17f; setPadding(dp(14), dp(10), dp(14), dp(10)) }
     private fun twoColumnRow(left: Pair<String, android.view.View>, right: Pair<String, android.view.View>) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL; gravity = Gravity.TOP
-        fun column(item: Pair<String, android.view.View>) = LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(TextView(this@MainActivity).apply { text = item.first; textSize = 13f; setTextColor(0xFF5D646B.toInt()); setPadding(0, 0, 0, dp(2)) }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-            addView(item.second, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-        }
-        addView(column(left), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
-        addView(column(right), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) })
+        fun column(item: Pair<String, android.view.View>) = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; addView(TextView(this@MainActivity).apply { text = item.first; textSize = 13f; setTextColor(0xFF5D646B.toInt()); setPadding(0, 0, 0, dp(2)) }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)); addView(item.second, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)) }
+        addView(column(left), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) }); addView(column(right), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) })
     }
     private fun section(root: LinearLayout, value: String) { root.addView(TextView(this).apply { text = value; textSize = 18f; setTextColor(0xFF172A3A.toInt()); setPadding(0, 20, 0, 8) }, lp()) }
-    private fun button(t: String, action: () -> Unit) = Button(this).apply {
-        text = t; textSize = 15f; setTextColor(0xFFFFFFFF.toInt()); isAllCaps = false
-        typeface = android.graphics.Typeface.create("sans", android.graphics.Typeface.BOLD); minHeight = dp(52); setPadding(dp(20), 0, dp(20), 0)
-        background = GradientDrawable().apply { setColor(0xFF172A3A.toInt()); cornerRadius = dp(18).toFloat() }
-        elevation = dp(3).toFloat(); setOnClickListener { action() }
-    }
+    private fun button(t: String, action: () -> Unit) = Button(this).apply { text = t; textSize = 15f; setTextColor(0xFFFFFFFF.toInt()); isAllCaps = false; typeface = android.graphics.Typeface.create("sans", android.graphics.Typeface.BOLD); minHeight = dp(52); setPadding(dp(20), 0, dp(20), 0); background = GradientDrawable().apply { setColor(0xFF172A3A.toInt()); cornerRadius = dp(18).toFloat() }; elevation = dp(3).toFloat(); setOnClickListener { action() } }
     private fun label(t: String) = TextView(this).apply { text = t; textSize = 16f; setTextColor(0xFF5D646B.toInt()); setPadding(0, dp(6), 0, dp(6)) }
     private fun lp() = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4); bottomMargin = dp(4) }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
@@ -270,9 +249,7 @@ class MainActivity : Activity() {
                 reelBitmaps.clear(); reelImageUris.clear(); imageEffects.clear(); imageEffectIntensities.clear(); val uris = mutableListOf<Uri>()
                 data.clipData?.let { clip -> for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri) } ?: data.data?.let { uris.add(it) }
                 uris.forEach { uri -> try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; decodePortrait(uri)?.let { reelBitmaps.add(it); reelImageUris.add(uri); imageEffects.add(ReelEncoder.ImageEffect.ZOOM_IN); imageEffectIntensities.add(0.18f) } }
-                mainBitmap = reelBitmaps.firstOrNull(); preview.backgroundBitmap = mainBitmap
-                mainImageLabel.text = when (reelBitmaps.size) { 0 -> "No images selected"; 1 -> "1 image selected"; else -> "${reelBitmaps.size} images selected" }
-                renderImageThumbnails(); refreshPreview()
+                mainBitmap = reelBitmaps.firstOrNull(); preview.backgroundBitmap = mainBitmap; mainImageLabel.text = when (reelBitmaps.size) { 0 -> "No images selected"; 1 -> "1 image selected"; else -> "${reelBitmaps.size} images selected" }; renderImageThumbnails(); refreshPreview()
             }
             101 -> { val uri = data.data ?: return; try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; ctaBitmap = decodePortrait(uri); preview.ctaBitmap = ctaBitmap; ctaImageLabel.text = "Outro selected"; preferences.edit().putString("cta_uri", uri.toString()).apply(); preview.invalidate() }
             102 -> { val uri = data.data ?: return; try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; musicUri = uri; musicLabel.text = "Music selected"; preferences.edit().putString("music_uri", uri.toString()).apply() }
@@ -288,6 +265,7 @@ class MainActivity : Activity() {
             imageStrip.addView(wrapper, LinearLayout.LayoutParams(size, size).apply { marginEnd = dp(8) })
         }
     }
+
     private fun showImagePreview(index: Int) {
         val bitmap = reelBitmaps.getOrNull(index) ?: return
         val effects = ReelEncoder.ImageEffect.values()
@@ -295,25 +273,13 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(20), dp(20), dp(16)) }
         root.addView(ImageView(this).apply { setImageBitmap(bitmap); scaleType = ImageView.ScaleType.CENTER_CROP }, LinearLayout.LayoutParams(-1, dp(360)))
         root.addView(label("EFFECT"))
-        val effectSpinner = Spinner(this).apply {
-            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, effects.map { it.name.replace('_',' ') })
-            setSelection(effects.indexOf(imageEffects.getOrElse(index) { ReelEncoder.ImageEffect.ZOOM_IN }).coerceAtLeast(0))
-        }
-        root.addView(effectSpinner)
-        root.addView(label("INTENSITY"))
+        val effectSpinner = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, effects.map { it.name.replace('_',' ') }); setSelection(effects.indexOf(imageEffects.getOrElse(index) { ReelEncoder.ImageEffect.ZOOM_IN }).coerceAtLeast(0)) }
+        root.addView(effectSpinner); root.addView(label("INTENSITY"))
         val valueLabel = label("${(imageEffectIntensities.getOrElse(index){0.18f} * 100).toInt()}%")
         val slider = SeekBar(this).apply { max = 50; progress = (imageEffectIntensities.getOrElse(index){0.18f} * 100).toInt().coerceIn(0,50) }
-        slider.setOnSeekBarChangeListener(object: SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) { valueLabel.text = "$progress%" }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
-            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
-        })
+        slider.setOnSeekBarChangeListener(object: SeekBar.OnSeekBarChangeListener { override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) { valueLabel.text = "$progress%" }; override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit; override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit })
         root.addView(slider); root.addView(valueLabel)
-        root.addView(button("APPLY") {
-            imageEffects[index] = effects[effectSpinner.selectedItemPosition]
-            imageEffectIntensities[index] = slider.progress / 100f
-            dialog.dismiss()
-        })
+        root.addView(button("APPLY") { imageEffects[index] = effects[effectSpinner.selectedItemPosition]; imageEffectIntensities[index] = slider.progress / 100f; dialog.dismiss() })
         dialog.setView(root); dialog.show()
     }
 
@@ -325,88 +291,20 @@ class MainActivity : Activity() {
         return try {
             val decoded = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } ?: return null
             val orientation = contentResolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) } ?: ExifInterface.ORIENTATION_NORMAL
-            val matrix = Matrix(); when (orientation) {
-                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f); ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f); ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.setScale(1f, -1f)
-                ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.setRotate(90f); matrix.postScale(-1f, 1f) }; ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
-                ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(-90f); matrix.postScale(-1f, 1f) }; ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
-            }
+            val matrix = Matrix(); when (orientation) { ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f); ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f); ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.setScale(1f, -1f); ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.setRotate(90f); matrix.postScale(-1f, 1f) }; ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f); ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(-90f); matrix.postScale(-1f, 1f) }; ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f) }
             val oriented = if (orientation == ExifInterface.ORIENTATION_NORMAL) decoded else Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also { if (it !== decoded) decoded.recycle() }
             centerCropPortrait(oriented)
         } catch (_: Exception) { null }
     }
     private fun centerCropPortrait(source: Bitmap): Bitmap { val targetW=1080; val targetH=1920; val targetRatio=targetW.toFloat()/targetH; val sourceRatio=source.width.toFloat()/source.height; val cropW:Int; val cropH:Int; if(sourceRatio>targetRatio){cropH=source.height;cropW=(cropH*targetRatio).toInt()}else{cropW=source.width;cropH=(cropW/targetRatio).toInt()}; val left=(source.width-cropW)/2; val top=(source.height-cropH)/2; val cropped=Bitmap.createBitmap(source,left,top,cropW,cropH); val scaled=Bitmap.createScaledBitmap(cropped,targetW,targetH,true); if(cropped!==source)cropped.recycle();if(scaled!==source)source.recycle();return scaled }
-    private fun toggleVisualPreview() {
-        if (visualPreviewPlaying) {
-            stopVisualPreview(resetIcon = true)
-            return
-        }
-        if (visualPreviewSlider.progress >= 100) visualPreviewSlider.progress = 0
-        visualPreviewStartProgress = visualPreviewSlider.progress
-        visualPreviewStartedAtMs = SystemClock.elapsedRealtime()
-        visualPreviewPlaying = true
-        visualPreviewPlayButton.text = "⏸"
-        startCachedVoicePreview(visualPreviewStartProgress)
-        preview.removeCallbacks(visualPreviewTick)
-        preview.post(visualPreviewTick)
-    }
+    private fun toggleVisualPreview() { if (visualPreviewPlaying) { stopVisualPreview(resetIcon = true); return }; if (visualPreviewSlider.progress >= 100) visualPreviewSlider.progress = 0; visualPreviewStartProgress = visualPreviewSlider.progress; visualPreviewStartedAtMs = SystemClock.elapsedRealtime(); visualPreviewPlaying = true; visualPreviewPlayButton.text = "⏸"; startCachedVoicePreview(visualPreviewStartProgress); preview.removeCallbacks(visualPreviewTick); preview.post(visualPreviewTick) }
     private fun startCachedVoicePreview(startProgress: Int) { }
-    private fun stopPreviewAudio() {
-        try { voicePlayer?.stop(); voicePlayer?.release() } catch (_: Exception) {}
-        try { ctaPreviewPlayer?.stop(); ctaPreviewPlayer?.release() } catch (_: Exception) {}
-        voicePlayer = null; ctaPreviewPlayer = null
-    }
-    private fun stopVisualPreview(resetIcon: Boolean) {
-        visualPreviewPlaying = false
-        if (::preview.isInitialized) preview.removeCallbacks(visualPreviewTick)
-        stopPreviewAudio()
-        if (resetIcon && ::visualPreviewPlayButton.isInitialized) visualPreviewPlayButton.text = "▶"
-    }
-    private fun visualPreviewDurationMs(): Long {
-        val bodyWords = ReelLayout.bodyWordCount(headlineInputs.map { it.text.toString() })
-        return (6500L + bodyWords * 220L).coerceIn(6500L, 22000L)
-    }
-    private fun updateVisualPreview(progress: Float) {
-        visualPreviewLabel.text = "VISUAL PREVIEW ${(progress * 100).toInt()}%"
-        val images = reelBitmaps
-        if (images.isEmpty()) { preview.visualProgress = progress; preview.invalidate(); return }
-        val segment = (progress * images.size).toInt().coerceIn(0, images.size - 1)
-        preview.backgroundBitmap = images[segment]
-        preview.effect = imageEffects.getOrElse(segment) { ReelEncoder.ImageEffect.ZOOM_IN }
-        preview.effectIntensity = imageEffectIntensities.getOrElse(segment) { 0.18f }
-        preview.visualProgress = (progress * images.size - segment).coerceIn(0f, 1f)
-        preview.textPreviewProgress = progress
-        preview.showCta = progress >= 0.98f && ctaBitmap != null
-        preview.invalidate()
-    }
-    override fun onSaveInstanceState(outState: Bundle) {
-        // Temporary editor state only. CTA and music keep their existing persistence.
-        if (::titleInput.isInitialized) {
-            outState.putString("temporary_title", titleInput.text.toString())
-            outState.putStringArrayList("temporary_headlines", ArrayList(headlineInputs.map { it.text.toString() }))
-            outState.putStringArrayList("temporary_image_uris", ArrayList(reelImageUris.map { it.toString() }))
-        }
-        super.onSaveInstanceState(outState)
-    }
-
-    private fun restoreTemporaryEditorState(state: Bundle?) {
-        if (state == null) return
-        titleInput.setText(state.getString("temporary_title", ""))
-        val headlines = state.getStringArrayList("temporary_headlines").orEmpty()
-        headlineInputs.forEachIndexed { index, input -> input.setText(headlines.getOrNull(index).orEmpty()) }
-        val imageUris = state.getStringArrayList("temporary_image_uris").orEmpty().mapNotNull { runCatching { Uri.parse(it) }.getOrNull() }
-        if (imageUris.isNotEmpty()) {
-            reelBitmaps.clear(); reelImageUris.clear(); imageEffects.clear(); imageEffectIntensities.clear()
-            imageUris.forEach { uri -> decodePortrait(uri)?.let { bitmap ->
-                reelBitmaps.add(bitmap); reelImageUris.add(uri)
-                imageEffects.add(ReelEncoder.ImageEffect.ZOOM_IN); imageEffectIntensities.add(0.18f)
-            } }
-            mainBitmap = reelBitmaps.firstOrNull(); preview.backgroundBitmap = mainBitmap
-            mainImageLabel.text = when (reelBitmaps.size) { 0 -> "No images selected"; 1 -> "1 image selected"; else -> "${reelBitmaps.size} images selected" }
-            renderImageThumbnails()
-        }
-        refreshPreview()
-    }
-
+    private fun stopPreviewAudio() { try { voicePlayer?.stop(); voicePlayer?.release() } catch (_: Exception) {}; try { ctaPreviewPlayer?.stop(); ctaPreviewPlayer?.release() } catch (_: Exception) {}; voicePlayer = null; ctaPreviewPlayer = null }
+    private fun stopVisualPreview(resetIcon: Boolean) { visualPreviewPlaying = false; if (::preview.isInitialized) preview.removeCallbacks(visualPreviewTick); stopPreviewAudio(); if (resetIcon && ::visualPreviewPlayButton.isInitialized) visualPreviewPlayButton.text = "▶" }
+    private fun visualPreviewDurationMs(): Long { val bodyWords = ReelLayout.bodyWordCount(headlineInputs.map { it.text.toString() }); return (6500L + bodyWords * 220L).coerceIn(6500L, 22000L) }
+    private fun updateVisualPreview(progress: Float) { visualPreviewLabel.text = "VISUAL PREVIEW ${(progress * 100).toInt()}%"; val images = reelBitmaps; if (images.isEmpty()) { preview.visualProgress = progress; preview.invalidate(); return }; val segment = (progress * images.size).toInt().coerceIn(0, images.size - 1); preview.backgroundBitmap = images[segment]; preview.effect = imageEffects.getOrElse(segment) { ReelEncoder.ImageEffect.ZOOM_IN }; preview.effectIntensity = imageEffectIntensities.getOrElse(segment) { 0.18f }; preview.visualProgress = (progress * images.size - segment).coerceIn(0f, 1f); preview.textPreviewProgress = progress; preview.showCta = progress >= 0.98f && ctaBitmap != null; preview.invalidate() }
+    override fun onSaveInstanceState(outState: Bundle) { if (::titleInput.isInitialized) { outState.putString("temporary_title", titleInput.text.toString()); outState.putStringArrayList("temporary_headlines", ArrayList(headlineInputs.map { it.text.toString() })); outState.putStringArrayList("temporary_image_uris", ArrayList(reelImageUris.map { it.toString() })) }; super.onSaveInstanceState(outState) }
+    private fun restoreTemporaryEditorState(state: Bundle?) { if (state == null) return; titleInput.setText(state.getString("temporary_title", "")); val headlines = state.getStringArrayList("temporary_headlines").orEmpty(); headlineInputs.forEachIndexed { index, input -> input.setText(headlines.getOrNull(index).orEmpty()) }; val imageUris = state.getStringArrayList("temporary_image_uris").orEmpty().mapNotNull { runCatching { Uri.parse(it) }.getOrNull() }; if (imageUris.isNotEmpty()) { reelBitmaps.clear(); reelImageUris.clear(); imageEffects.clear(); imageEffectIntensities.clear(); imageUris.forEach { uri -> decodePortrait(uri)?.let { bitmap -> reelBitmaps.add(bitmap); reelImageUris.add(uri); imageEffects.add(ReelEncoder.ImageEffect.ZOOM_IN); imageEffectIntensities.add(0.18f) } }; mainBitmap = reelBitmaps.firstOrNull(); preview.backgroundBitmap = mainBitmap; mainImageLabel.text = when (reelBitmaps.size) { 0 -> "No images selected"; 1 -> "1 image selected"; else -> "${reelBitmaps.size} images selected" }; renderImageThumbnails() }; refreshPreview() }
     private fun refreshPreview() { preview.title=titleInput.text.toString().trim().ifBlank { "Main heading" }; preview.headlines=headlineInputs.map{it.text.toString().trim()}; preview.textPreviewProgress = 0f; preview.invalidate() }
     private fun testVoice() { if (!::voiceTts.isInitialized) return toast("Voice service is still loading"); val selected=selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition) ?: return toast("Select a Kokoro voice first"); val parts=mutableListOf<String>(); val heading=titleInput.text.toString().trim(); if(heading.isNotBlank())parts.add(heading); headlineInputs.map{it.text.toString().trim()}.filter{it.isNotBlank()}.forEach{parts.add(it)}; val speechText=parts.joinToString(". "); if(speechText.isBlank())return toast("Enter a heading or subheading first"); toast("Generating and playing voice..."); val output=File(cacheDir,"daily_flare_voice.wav"); val selectedSpeed=voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition){1.0f}; voiceTts.speakToFile(speechText,selected,output,selectedSpeed){ok,duration->runOnUiThread{if(!ok)toast("Voice generation failed")else{playVoiceFile(output);toast("Playing Kokoro voice at ${selectedSpeed}×: ${duration} ms")}}} }
     private fun getAudioDurationMs(file: File): Long { val retriever=MediaMetadataRetriever(); return try{retriever.setDataSource(file.absolutePath);retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?:0L}catch(_:Exception){0L}finally{try{retriever.release()}catch(_:Exception){}} }
