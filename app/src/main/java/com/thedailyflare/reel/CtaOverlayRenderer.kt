@@ -29,22 +29,43 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
             val relative = timelineMs - o.startMs
             if (relative < 0L || relative >= o.durationMs) return@forEach
             val bitmap = frame(entry, relative) ?: return@forEach
-            val scale = o.scale.coerceIn(0.03f, 1f)
-            val targetW = width * scale
-            val aspect = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1)
-            val targetH = targetW / aspect
-            val cx = width * o.x.coerceIn(0f, 1f)
-            val cy = height * o.y.coerceIn(0f, 1f)
-            val dst = RectF(cx - targetW / 2f, cy - targetH / 2f, cx + targetW / 2f, cy + targetH / 2f)
-            canvas.drawBitmap(bitmap, null, dst, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            canvas.drawBitmap(bitmap, null, rectFor(o, bitmap, width, height), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
         }
     }
 
+    fun hitTest(timelineMs: Long, x: Float, y: Float, width: Int, height: Int): Int {
+        for (i in entries.indices.reversed()) {
+            val entry = entries[i]
+            val o = entry.overlay
+            val relative = timelineMs - o.startMs
+            if (relative < 0L || relative >= o.durationMs) continue
+            val bitmap = frame(entry, relative) ?: continue
+            if (rectFor(o, bitmap, width, height).contains(x, y)) return i
+        }
+        return -1
+    }
+
+    private fun rectFor(o: CtaOverlay, bitmap: Bitmap, width: Int, height: Int): RectF {
+        val scale = o.scale.coerceIn(0.03f, 1f)
+        val targetW = width * scale
+        val aspect = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1)
+        val targetH = targetW / aspect
+        val cx = width * o.x.coerceIn(0f, 1f)
+        val cy = height * o.y.coerceIn(0f, 1f)
+        return RectF(cx - targetW / 2f, cy - targetH / 2f, cx + targetW / 2f, cy + targetH / 2f)
+    }
+
     private fun frame(entry: Entry, relativeMs: Long): Bitmap? {
-        val bucket = (relativeMs / 33L) * 33L
+        val bucket = (relativeMs / 66L) * 66L
         val key = "${entry.overlay.uri}|$bucket"
         cache[key]?.let { return it }
-        val decoded = runCatching { entry.retriever.getFrameAtTime(relativeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST) }.getOrNull() ?: return null
+        val decoded = runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 27) {
+                entry.retriever.getScaledFrameAtTime(relativeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST, 540, 960)
+            } else {
+                entry.retriever.getFrameAtTime(relativeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
+            }
+        }.getOrNull() ?: return null
         val prepared = makeChromaKeyTransparent(decoded)
         if (prepared !== decoded) decoded.recycle()
         cache[key] = prepared
