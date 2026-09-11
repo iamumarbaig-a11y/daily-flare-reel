@@ -1,10 +1,16 @@
 package com.thedailyflare.reel
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.FFmpegSession
 import com.arthenica.ffmpegkit.ReturnCode
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Decodes VP9/WebM CTA videos through FFmpeg/libvpx into RGBA PNG frames.
@@ -12,6 +18,7 @@ import java.io.File
  */
 object CtaAlphaDecoder {
     const val FRAME_RATE = 15f
+    private const val MAX_DECODE_SECONDS = 45L
 
     fun decode(context: Context, uri: Uri): File? {
         val input = runCatching { copyToCache(context, uri) }.getOrNull() ?: return null
@@ -24,13 +31,30 @@ object CtaAlphaDecoder {
         }
 
         val pattern = File(dir, "frame_%05d.png")
-        // WebM alpha is stored in Matroska BlockAdditional data. libvpx-vp9
-        // reconstructs that alpha plane; format=rgba keeps it in the PNGs.
+        // Do not let FFmpeg auto-select Android's VP9 decoder. WebM alpha is
+        // carried in Matroska BlockAdditional data and libvpx reconstructs it.
+        // fps keeps the editor/export workload bounded while format=rgba writes
+        // the reconstructed alpha plane into the PNG frames.
         val command = "-y -loglevel error -c:v libvpx-vp9 -i ${quote(input.absolutePath)} -map 0:v:0 -an -vf fps=${FRAME_RATE.toInt()},format=rgba ${quote(pattern.absolutePath)}"
-        val session = FFmpegKit.execute(command)
-        input.delete()
+        val completed = CountDownLatch(1)
+        val sessionRef = AtomicReference<FFmpegSession?>(null)
 
-        if (!ReturnCode.isSuccess(session.returnCode)) {
+        FFmpegKit.executeAsync(command, { session ->
+            sessionRef.set(session)
+            completed.countDown()
+        })
+
+        val finished = runCatching { completed.await(MAX_DECODE_SECONDS, TimeUnit.SECONDS) }.getOrDefault(false)
+        if (!finished) {
+            sessionRef.get()?.let { runCatching { FFmpegKit.cancel(it.sessionId) } }
+            input.delete()
+            dir.deleteRecursively()
+            return null
+        }
+
+        val session = sessionRef.get()
+        input.delete()
+        if (session == null || !ReturnCode.isSuccess(session.returnCode)) {
             dir.deleteRecursively()
             return null
         }
@@ -41,14 +65,16 @@ object CtaAlphaDecoder {
             return null
         }
 
-        // Do not accept a decode that silently produced opaque frames.
-        // A real alpha WebM must contain at least some transparent pixels.
-        val first = android.graphics.BitmapFactory.decodeFile(frames.minByOrNull { it.name }!!.absolutePath)
-        if (first == null) {
+        // Verify that FFmpeg/libvpx actually reconstructed transparency.
+        val firstFile = frames.minByOrNull { it.name } ?: run {
             dir.deleteRecursively()
             return null
         }
-        val alpha = first.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+        val first = BitmapFactory.decodeFile(firstFile.absolutePath) ?: run {
+            dir.deleteRecursively()
+            return null
+        }
+        val alpha = first.copy(Bitmap.Config.ARGB_8888, false)
         first.recycle()
         val pixels = IntArray(alpha.width * alpha.height)
         alpha.getPixels(pixels, 0, alpha.width, 0, 0, alpha.width, alpha.height)
