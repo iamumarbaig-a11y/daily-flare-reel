@@ -5,6 +5,7 @@ dependencies {
     implementation("androidx.media3:media3-transformer:1.10.1")
     implementation("androidx.media3:media3-common:1.10.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
+    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-video:8.1.7")
     implementation(files("libs/sherpa-onnx-1.13.7.aar"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.apache.commons:commons-compress:1.27.1")
