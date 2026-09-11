@@ -46,14 +46,14 @@ class CtaEditorPreviewView(context: Context) : View(context) {
         invalidate()
     }
 
-    private fun startPlayback() {
+    fun startPlayback() {
         removeCallbacks(tick)
         startedAt = SystemClock.elapsedRealtime()
         playing = true
         post(tick)
     }
 
-    private fun stopPlayback() {
+    fun stopPlayback() {
         playing = false
         removeCallbacks(tick)
     }
