@@ -249,120 +249,84 @@ class MainActivity : Activity() {
         when (requestCode) {
             100 -> {
                 reelBitmaps.clear(); reelImageUris.clear(); imageEffects.clear(); imageEffectIntensities.clear(); val uris = mutableListOf<Uri>()
-                data.clipData?.let { clip -> for (i in 0 until clip.itemCount) uris.add(clip.itemAt(i).uri) } ?: data.data?.let { uris.add(it) }
-                uris.forEach { uri -> try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; decodePortrait(uri)?.let { reelBitmaps.add(it); reelImageUris.add(uri); imageEffects.add(ReelEncoder.ImageEffect.PAN_ZOOM); imageEffectIntensities.add(0.5f) } }
-                refreshImageStrip(); refreshPreview()
+                data.clipData?.let { clip -> for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri) } ?: data.data?.let { uris.add(it) }
+                uris.forEach { uri -> try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; decodePortrait(uri)?.let { reelBitmaps.add(it); reelImageUris.add(uri); imageEffects.add(ReelEncoder.ImageEffect.ZOOM_IN); imageEffectIntensities.add(0.18f) } }
+                mainBitmap = reelBitmaps.firstOrNull(); preview.backgroundBitmap = mainBitmap; mainImageLabel.text = when (reelBitmaps.size) { 0 -> "No images selected"; 1 -> "1 image selected"; else -> "${reelBitmaps.size} images selected" }; renderImageThumbnails(); refreshPreview()
             }
-            101 -> { data.data?.let { uri -> try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; ctaBitmap?.recycle(); ctaBitmap = decodePortrait(uri); ctaImageLabel.text = "Outro selected"; refreshPreview() } }
-            102 -> { data.data?.let { uri -> try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; musicUri = uri; musicLabel.text = "Music selected" } }
+            101 -> { val uri = data.data ?: return; try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; ctaBitmap = decodePortrait(uri); preview.ctaBitmap = ctaBitmap; ctaImageLabel.text = "Outro selected"; preferences.edit().putString("cta_uri", uri.toString()).apply(); preview.invalidate() }
+            102 -> { val uri = data.data ?: return; try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}; musicUri = uri; musicLabel.text = "Music selected"; preferences.edit().putString("music_uri", uri.toString()).apply() }
         }
     }
 
-    private fun refreshImageStrip() {
-        imageStrip.removeAllViews()
+    private fun renderImageThumbnails() {
+        imageStrip.removeAllViews(); val size = dp(58); val radius = dp(10).toFloat()
         reelBitmaps.forEachIndexed { index, bitmap ->
-            val image = ImageView(this).apply { setImageBitmap(bitmap); scaleType = ImageView.ScaleType.CENTER_CROP; layoutParams = LinearLayout.LayoutParams(dp(84), dp(120)).apply { marginEnd = dp(8) } }
-            image.setOnClickListener { showImageOptions(index) }
-            imageStrip.addView(image)
+            val wrapper = FrameLayout(this).apply { background = GradientDrawable().apply { setColor(0xFF172A3A.toInt()); cornerRadius = radius }; setPadding(dp(2), dp(2), dp(2), dp(2)); elevation = dp(2).toFloat() }
+            val image = ImageView(this).apply { setImageBitmap(bitmap); scaleType = ImageView.ScaleType.CENTER_CROP; contentDescription = "Reel image ${index + 1}" }
+            wrapper.addView(image, FrameLayout.LayoutParams(-1, -1)); wrapper.setOnClickListener { showImagePreview(index) }
+            imageStrip.addView(wrapper, LinearLayout.LayoutParams(size, size).apply { marginEnd = dp(8) })
         }
     }
 
-    private fun showImageOptions(index: Int) {
-        val labels = arrayOf("PAN + ZOOM", "NONE", "ZOOM IN", "ZOOM OUT")
-        android.app.AlertDialog.Builder(this).setTitle("Image ${index + 1}").setItems(labels) { _, which ->
-            imageEffects[index] = when (which) { 1 -> ReelEncoder.ImageEffect.NONE; 2 -> ReelEncoder.ImageEffect.ZOOM_IN; 3 -> ReelEncoder.ImageEffect.ZOOM_OUT; else -> ReelEncoder.ImageEffect.PAN_ZOOM }
-            refreshPreview()
-        }.show()
+    private fun showImagePreview(index: Int) {
+        val bitmap = reelBitmaps.getOrNull(index) ?: return
+        val effects = ReelEncoder.ImageEffect.values()
+        val dialog = android.app.AlertDialog.Builder(this).create()
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(20), dp(20), dp(16)) }
+        root.addView(ImageView(this).apply { setImageBitmap(bitmap); scaleType = ImageView.ScaleType.CENTER_CROP }, LinearLayout.LayoutParams(-1, dp(360)))
+        root.addView(label("EFFECT"))
+        val effectSpinner = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, effects.map { it.name.replace('_',' ') }); setSelection(effects.indexOf(imageEffects.getOrElse(index) { ReelEncoder.ImageEffect.ZOOM_IN }).coerceAtLeast(0)) }
+        root.addView(effectSpinner); root.addView(label("INTENSITY"))
+        val valueLabel = label("${(imageEffectIntensities.getOrElse(index){0.18f} * 100).toInt()}%")
+        val slider = SeekBar(this).apply { max = 50; progress = (imageEffectIntensities.getOrElse(index){0.18f} * 100).toInt().coerceIn(0,50) }
+        slider.setOnSeekBarChangeListener(object: SeekBar.OnSeekBarChangeListener { override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) { valueLabel.text = "$progress%" }; override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit; override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit })
+        root.addView(slider); root.addView(valueLabel)
+        root.addView(button("APPLY") { imageEffects[index] = effects[effectSpinner.selectedItemPosition]; imageEffectIntensities[index] = slider.progress / 100f; dialog.dismiss() })
+        dialog.setView(root); dialog.show()
     }
 
-    private fun visualPreviewDurationMs(): Long {
-        val imageCount = reelBitmaps.size.coerceAtLeast(1)
-        return (imageCount * 3000L + 3000L).coerceAtLeast(1000L)
+    private fun restorePersistentSelections() { preferences.getString("cta_uri", null)?.let { restoreCta(Uri.parse(it)) }; preferences.getString("music_uri", null)?.let { restoreMusic(Uri.parse(it)) } }
+    private fun restoreCta(uri: Uri) { val bitmap = decodePortrait(uri) ?: return; ctaBitmap = bitmap; preview.ctaBitmap = bitmap; ctaImageLabel.text = "Outro selected"; preview.invalidate() }
+    private fun restoreMusic(uri: Uri) { try { contentResolver.openInputStream(uri)?.close(); musicUri = uri; musicLabel.text = "Music selected" } catch (_: Exception) {} }
+    private fun simpleSelectionListener(onSelected: (Int) -> Unit) = object : android.widget.AdapterView.OnItemSelectedListener { override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit; override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) = onSelected(position) }
+    private fun decodePortrait(uri: Uri): Bitmap? {
+        return try {
+            val decoded = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } ?: return null
+            val orientation = contentResolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) } ?: ExifInterface.ORIENTATION_NORMAL
+            val matrix = Matrix(); when (orientation) { ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f); ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f); ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.setScale(1f, -1f); ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.setRotate(90f); matrix.postScale(-1f, 1f) }; ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f); ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(-90f); matrix.postScale(-1f, 1f) }; ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f) }
+            val oriented = if (orientation == ExifInterface.ORIENTATION_NORMAL) decoded else Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also { if (it !== decoded) decoded.recycle() }
+            centerCropPortrait(oriented)
+        } catch (_: Exception) { null }
     }
-
-    private fun updateVisualPreview(progress: Float) {
-        visualPreviewLabel.text = "VISUAL PREVIEW ${(progress * 100f).toInt()}%"
-        preview.setPreviewProgress(progress)
+    private fun centerCropPortrait(source: Bitmap): Bitmap { val targetW=1080; val targetH=1920; val targetRatio=targetW.toFloat()/targetH; val sourceRatio=source.width.toFloat()/source.height; val cropW:Int; val cropH:Int; if(sourceRatio>targetRatio){cropH=source.height;cropW=(cropH*targetRatio).toInt()}else{cropW=source.width;cropH=(cropW/targetRatio).toInt()}; val left=(source.width-cropW)/2; val top=(source.height-cropH)/2; val cropped=Bitmap.createBitmap(source,left,top,cropW,cropH); val scaled=Bitmap.createScaledBitmap(cropped,targetW,targetH,true); if(cropped!==source)cropped.recycle();if(scaled!==source)source.recycle();return scaled }
+    private fun toggleVisualPreview() { if (visualPreviewPlaying) { stopVisualPreview(resetIcon = true); return }; if (visualPreviewSlider.progress >= 100) visualPreviewSlider.progress = 0; visualPreviewStartProgress = visualPreviewSlider.progress; visualPreviewStartedAtMs = SystemClock.elapsedRealtime(); visualPreviewPlaying = true; visualPreviewPlayButton.text = "⏸"; startCachedVoicePreview(visualPreviewStartProgress); preview.removeCallbacks(visualPreviewTick); preview.post(visualPreviewTick) }
+    private fun startCachedVoicePreview(startProgress: Int) { }
+    private fun stopPreviewAudio() { try { voicePlayer?.stop(); voicePlayer?.release() } catch (_: Exception) {}; try { ctaPreviewPlayer?.stop(); ctaPreviewPlayer?.release() } catch (_: Exception) {}; voicePlayer = null; ctaPreviewPlayer = null }
+    private fun stopVisualPreview(resetIcon: Boolean) { visualPreviewPlaying = false; if (::preview.isInitialized) preview.removeCallbacks(visualPreviewTick); stopPreviewAudio(); if (resetIcon && ::visualPreviewPlayButton.isInitialized) visualPreviewPlayButton.text = "▶" }
+    private fun visualPreviewDurationMs(): Long { val bodyWords = ReelLayout.bodyWordCount(headlineInputs.map { it.text.toString() }); return (6500L + bodyWords * 220L).coerceIn(6500L, 22000L) }
+    private fun updateVisualPreview(progress: Float) { preview.timelineDurationMs = visualPreviewDurationMs(); visualPreviewLabel.text = "VISUAL PREVIEW ${(progress * 100).toInt()}%"; val images = reelBitmaps; if (images.isEmpty()) { preview.visualProgress = progress; preview.invalidate(); return }; val segment = (progress * images.size).toInt().coerceIn(0, images.size - 1); preview.backgroundBitmap = images[segment]; preview.effect = imageEffects.getOrElse(segment) { ReelEncoder.ImageEffect.ZOOM_IN }; preview.effectIntensity = imageEffectIntensities.getOrElse(segment) { 0.18f }; preview.visualProgress = (progress * images.size - segment).coerceIn(0f, 1f); preview.timelineProgress = progress; preview.textPreviewProgress = progress; preview.showCta = progress >= 0.98f && ctaBitmap != null; preview.invalidate() }
+    override fun onSaveInstanceState(outState: Bundle) { if (::titleInput.isInitialized) { outState.putString("temporary_title", titleInput.text.toString()); outState.putStringArrayList("temporary_headlines", ArrayList(headlineInputs.map { it.text.toString() })); outState.putStringArrayList("temporary_image_uris", ArrayList(reelImageUris.map { it.toString() })) }; super.onSaveInstanceState(outState) }
+    private fun restoreTemporaryEditorState(state: Bundle?) { if (state == null) return; titleInput.setText(state.getString("temporary_title", "")); val headlines = state.getStringArrayList("temporary_headlines").orEmpty(); headlineInputs.forEachIndexed { index, input -> input.setText(headlines.getOrNull(index).orEmpty()) }; val imageUris = state.getStringArrayList("temporary_image_uris").orEmpty().mapNotNull { runCatching { Uri.parse(it) }.getOrNull() }; if (imageUris.isNotEmpty()) { reelBitmaps.clear(); reelImageUris.clear(); imageEffects.clear(); imageEffectIntensities.clear(); imageUris.forEach { uri -> decodePortrait(uri)?.let { bitmap -> reelBitmaps.add(bitmap); reelImageUris.add(uri); imageEffects.add(ReelEncoder.ImageEffect.ZOOM_IN); imageEffectIntensities.add(0.18f) } }; mainBitmap = reelBitmaps.firstOrNull(); preview.backgroundBitmap = mainBitmap; mainImageLabel.text = when (reelBitmaps.size) { 0 -> "No images selected"; 1 -> "1 image selected"; else -> "${reelBitmaps.size} images selected" }; renderImageThumbnails() }; refreshPreview() }
+    private fun refreshPreview() { preview.title=titleInput.text.toString().trim().ifBlank { "Main heading" }; preview.headlines=headlineInputs.map{it.text.toString().trim()}; preview.textPreviewProgress = 0f; preview.invalidate() }
+    private fun testVoice() { if (!::voiceTts.isInitialized) return toast("Voice service is still loading"); val selected=selectedVoice ?: voiceOptions.getOrNull(voiceSpinner.selectedItemPosition) ?: return toast("Select a Kokoro voice first"); val parts=mutableListOf<String>(); val heading=titleInput.text.toString().trim(); if(heading.isNotBlank())parts.add(heading); headlineInputs.map{it.text.toString().trim()}.filter{it.isNotBlank()}.forEach{parts.add(it)}; val speechText=parts.joinToString(". "); if(speechText.isBlank())return toast("Enter a heading or subheading first"); toast("Generating and playing voice..."); val output=File(cacheDir,"daily_flare_voice.wav"); val selectedSpeed=voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition){1.0f}; voiceTts.speakToFile(speechText,selected,output,selectedSpeed){ok,duration->runOnUiThread{if(!ok)toast("Voice generation failed")else{playVoiceFile(output);toast("Playing Kokoro voice at ${selectedSpeed}×: ${duration} ms")}}} }
+    private fun getAudioDurationMs(file: File): Long { val retriever=MediaMetadataRetriever(); return try{retriever.setDataSource(file.absolutePath);retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?:0L}catch(_:Exception){0L}finally{try{retriever.release()}catch(_:Exception){}} }
+    private fun playVoiceFile(file: File){try{voicePlayer?.release();voicePlayer=MediaPlayer().apply{setDataSource(file.absolutePath);setOnCompletionListener{it.release();voicePlayer=null};prepare();start()}}catch(_:Exception){toast("Voice was generated but could not be played")}}
+    private fun updateExportProgress(percent:Int,stage:String,detailEta:Boolean=true){val clamped=percent.coerceIn(0,100);val etaText=if(detailEta&&clamped in 1..99&&exportStartedAtMs>0L){val elapsedMs=System.currentTimeMillis()-exportStartedAtMs;val estimatedTotalMs=(elapsedMs.toDouble()*100.0/clamped.toDouble()).toLong();val remainingMs=(estimatedTotalMs-elapsedMs).coerceAtLeast(0L);" • ${formatDuration(remainingMs)} left"}else"";exportProgress.progress=clamped;exportStatus.text="$stage $clamped%$etaText"}
+    private fun formatDuration(ms:Long):String{val totalSeconds=((ms+999L)/1000L).toInt().coerceAtLeast(0);return if(totalSeconds<60)"${totalSeconds}s" else "${totalSeconds/60}m ${totalSeconds%60}s"}
+    private fun exportReel(){
+        val backgrounds=reelBitmaps.ifEmpty{listOfNotNull(mainBitmap)}; if(backgrounds.isEmpty())return toast("Choose at least one image"); val cta=ctaBitmap?:return toast("Choose the outro image"); val music=musicUri?:return toast("Choose music")
+        val title=titleInput.text.toString().trim().ifBlank{"Main heading"}; val headlines=headlineInputs.map{it.text.toString().trim()}; exportStartedAtMs=System.currentTimeMillis(); lastSavedOutputUri=null; updateExportProgress(0,"Preparing export...",false); toast("Starting export")
+        thread(name="daily-flare-export"){try{val video=File(cacheDir,"daily_flare_video.mp4");var voice=File(cacheDir,"daily_flare_export_voice.wav");var ctaVoice=File(cacheDir,"daily_flare_cta_voice.wav");val audio=File(cacheDir,"daily_flare_mixed_audio_aac.mp4");val output=File(cacheDir,"daily_flare_reel_18s.mp4");video.delete();voice.delete();ctaVoice.delete();audio.delete();output.delete(); val speechParts=mutableListOf<String>();if(title.isNotBlank())speechParts.add(title);headlines.filter{it.isNotBlank()}.forEach{speechParts.add(it)};val speechText=speechParts.joinToString(". ");if(speechText.isBlank())throw IllegalStateException("Enter a heading or subheading for the voice");val selectedVoiceOption=this@MainActivity.selectedVoice?:voiceOptions.getOrNull(voiceSpinner.selectedItemPosition)?:throw IllegalStateException("Select a Kokoro voice first");if(!::voiceTts.isInitialized)throw IllegalStateException("Kokoro voice service is not ready");val selectedSpeed=voiceSpeeds.getOrElse(speedSpinner.selectedItemPosition){1.0f};runOnUiThread{updateExportProgress(2,"Loading Kokoro model...")};val voiceGenerationStartedAt=System.currentTimeMillis();runOnUiThread{updateExportProgress(4,"Generating Kokoro narration...")};val voiceLatch=CountDownLatch(1);var voiceOk=false;voiceTts.speakToFile(speechText,selectedVoiceOption,voice,selectedSpeed){ok,_->voiceOk=ok;voiceLatch.countDown()};if(!voiceLatch.await(60,TimeUnit.SECONDS)||!voiceOk||!voice.exists()||voice.length()<128L||voice.lastModified()<voiceGenerationStartedAt)throw IllegalStateException("Kokoro voice generation failed");val voiceDurationMs=getAudioDurationMs(voice);if(voiceDurationMs<=0L)throw IllegalStateException("Generated Kokoro narration has no duration");runOnUiThread{updateExportProgress(8,"Kokoro narration generated",false)};
+val timingTexts=listOf(title)+headlines
+val weights=timingTexts.map { it.trim().split(Regex("\\s+")).count { word -> word.isNotBlank() }.coerceAtLeast(0) }
+val bodyWeight=weights.drop(1).sum().coerceAtLeast(1)
+val titleWeight=weights.firstOrNull()?.coerceAtLeast(0) ?: 0
+val measuredTitleSpeechMs=if (titleWeight > 0) (voiceDurationMs.toDouble()*titleWeight.toDouble()/(titleWeight+bodyWeight).toDouble()).toLong() else 0L
+val measuredHeadlineDurationsMs=headlines.indices.map { index -> (voiceDurationMs-measuredTitleSpeechMs).coerceAtLeast(1L)*weights.getOrElse(index+1){0}.toLong()/bodyWeight.toLong() }
+ReelEncoder(this).encode(backgrounds,cta,title,headlines,voiceDurationMs,measuredTitleSpeechMs,measuredHeadlineDurationsMs,video,imageEffects,imageEffectIntensities,"NONE",0,"WORD BY WORD",object:ReelEncoder.Drain{override fun onFrame(frame:Int,total:Int){val percent=20+((frame*60L)/total.coerceAtLeast(1)).toInt();runOnUiThread{updateExportProgress(percent,"Rendering video...")}}});if(!video.exists()||video.length()==0L)throw IllegalStateException("Video rendering produced no output");runOnUiThread{updateExportProgress(82,"Generating Kokoro outro voice...")};val ctaLatch=CountDownLatch(1);var ctaOk=false;voiceTts.speakToFile(ctaText,selectedVoiceOption,ctaVoice,selectedSpeed){ok,_->ctaOk=ok;ctaLatch.countDown()};if(!ctaLatch.await(30,TimeUnit.SECONDS)||!ctaOk||!ctaVoice.exists()||ctaVoice.length()<128L||getAudioDurationMs(ctaVoice)<=0L)throw IllegalStateException("CTA voice generation failed");runOnUiThread{updateExportProgress(88,"Mixing generated voice and music...")};if(!AudioTranscoder(this).transcodeMixed(music,voice,audio,ctaVoice)||!audio.exists()||audio.length()==0L)throw IllegalStateException("Voice and music could not be mixed");runOnUiThread{updateExportProgress(95,"Finalizing video...")};if(!AudioMuxer().mux(video,audio,output)||!output.exists()||output.length()==0L)throw IllegalStateException("Audio/video muxing failed");val savedUri=saveToGallery(output);lastSavedOutputUri=savedUri;runOnUiThread{updateExportProgress(100,if(savedUri!=null)"Export complete ✓"else"Export completed but could not save to gallery",false);if(savedUri!=null)showSharePopup(savedUri)}}catch(e:Exception){runOnUiThread{exportStatus.text="Export failed";toast("Export failed: ${e.message?:"unknown error"}")}}}
     }
-
-    private fun toggleVisualPreview() {
-        if (visualPreviewPlaying) { stopVisualPreview(resetIcon = true); return }
-        visualPreviewPlaying = true
-        visualPreviewStartedAtMs = SystemClock.elapsedRealtime()
-        visualPreviewStartProgress = visualPreviewSlider.progress
-        visualPreviewPlayButton.text = "⏸"
-        preview.post(visualPreviewTick)
-    }
-
-    private fun stopVisualPreview(resetIcon: Boolean) {
-        visualPreviewPlaying = false
-        preview.removeCallbacks(visualPreviewTick)
-        if (resetIcon) visualPreviewPlayButton.text = "▶"
-    }
-
-    private fun restorePersistentSelections() {
-        musicUri = preferences.getString("music_uri", null)?.let(Uri::parse)
-        if (musicUri != null) musicLabel.text = "Music selected"
-    }
-
-    private fun restoreTemporaryEditorState(savedInstanceState: Bundle?) {
-        titleInput.setText(savedInstanceState?.getString("title") ?: "")
-        headlineInputs.forEachIndexed { index, input -> input.setText(savedInstanceState?.getString("headline_$index") ?: "") }
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        outState.putString("title", titleInput.text.toString())
-        headlineInputs.forEachIndexed { index, input -> outState.putString("headline_$index", input.text.toString()) }
-        super.onSaveInstanceState(outState)
-    }
-
-    private fun refreshPreview() {
-        if (!::preview.isInitialized) return
-        preview.setTextContent(titleInput.text.toString(), headlineInputs.map { it.text.toString() })
-        preview.invalidate()
-    }
-
-    private fun testVoice() {
-        val text = listOf(titleInput.text.toString(), *headlineInputs.map { it.text.toString() }.toTypedArray()).filter { it.isNotBlank() }.joinToString(". ")
-        if (text.isBlank()) { toast("Enter headings first"); return }
-        voicePlayer?.release()
-        voicePlayer = voiceTts.speak(text, selectedVoice, preferences.getFloat("voice_speed", 1.0f))
-    }
-
-    private fun exportReel() {
-        if (reelBitmaps.isEmpty()) { toast("Select images first"); return }
-        exportStatus.text = "Exporting..."
-        exportProgress.progress = 0
-        exportStartedAtMs = SystemClock.elapsedRealtime()
-        thread {
-            try {
-                val output = ReelEncoder(this).encode(
-                    images = reelBitmaps,
-                    imageEffects = imageEffects,
-                    imageEffectIntensities = imageEffectIntensities,
-                    title = titleInput.text.toString(),
-                    headlines = headlineInputs.map { it.text.toString() },
-                    musicUri = musicUri,
-                    musicVolume = preferences.getInt("music_intensity", 5) / 100f,
-                    onProgress = { p -> runOnUiThread { exportProgress.progress = p } }
-                )
-                runOnUiThread { lastSavedOutputUri = output; exportStatus.text = "Export complete"; toast("Reel exported") }
-            } catch (e: Exception) {
-                runOnUiThread { exportStatus.text = "Export failed: ${e.message ?: "Unknown error"}"; toast("Export failed") }
-            }
-        }
-    }
-
-    override fun onDestroy() {
-        stopVisualPreview(resetIcon = false)
-        voicePlayer?.release(); voicePlayer = null
-        ctaPreviewPlayer?.release(); ctaPreviewPlayer = null
-        super.onDestroy()
-    }
-
-    private fun toast(message: String) { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
-
-    private fun decodePortrait(uri: Uri): Bitmap? = try {
-        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
-    } catch (_: Exception) { null }
+    private fun saveToGallery(source:File):Uri?{if(!source.exists()||source.length()==0L)return null;return try{if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q){val values=ContentValues().apply{put(MediaStore.Video.Media.DISPLAY_NAME,"daily_flare_reel_${System.currentTimeMillis()}.mp4");put(MediaStore.Video.Media.MIME_TYPE,"video/mp4");put(MediaStore.Video.Media.RELATIVE_PATH,Environment.DIRECTORY_MOVIES+"/Daily Flare Reel");put(MediaStore.Video.Media.IS_PENDING,1)};val uri=contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,values)?:return null;try{contentResolver.openOutputStream(uri)?.use{out->source.inputStream().use{input->input.copyTo(out)}}?:return null;values.clear();values.put(MediaStore.Video.Media.IS_PENDING,0);if(contentResolver.update(uri,values,null,null)>0)uri else null}catch(_:Exception){contentResolver.delete(uri,null,null);null}}else{val dir=File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),"Daily Flare Reel").apply{mkdirs()};val destination=File(dir,"daily_flare_reel_${System.currentTimeMillis()}.mp4");source.copyTo(destination,overwrite=true);sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE,Uri.fromFile(destination)));if(destination.exists()&&destination.length()>0L)Uri.fromFile(destination) else null}}catch(_:Exception){null}}
+    private fun showSharePopup(uri:Uri){android.app.AlertDialog.Builder(this).setTitle("Export complete").setMessage("Your Daily Flare Reel is ready.").setNegativeButton("CLOSE",null).setPositiveButton("SHARE"){_,_->startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply{type="video/mp4";putExtra(Intent.EXTRA_STREAM,uri);addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)},"Share Daily Flare Reel"))}.show()}
+    override fun onDestroy(){stopVisualPreview(resetIcon=false);voicePlayer?.release();voicePlayer=null;if(::voiceTts.isInitialized)voiceTts.shutdown();super.onDestroy()}
+    private fun toast(message:String)=Toast.makeText(this,message,Toast.LENGTH_LONG).show()
 }
