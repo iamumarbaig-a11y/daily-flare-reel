@@ -1,18 +1,17 @@
 package com.thedailyflare.reel
 
+import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
-import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
 
-class CtaOverlayActivity : AppCompatActivity() {
+class CtaOverlayActivity : Activity() {
     private lateinit var list: LinearLayout
     private lateinit var preview: CtaEditorPreviewView
     private var overlays = mutableListOf<CtaOverlay>()
