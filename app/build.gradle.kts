@@ -2,13 +2,8 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 
 dependencies {
     implementation("androidx.exifinterface:exifinterface:1.3.7")
-    implementation("androidx.media3:media3-transformer:1.10.1")
-    implementation("androidx.media3:media3-common:1.10.1")
-    implementation("androidx.documentfile:documentfile:1.0.1")
-    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-video:8.1.7")
     implementation(files("libs/sherpa-onnx-1.13.7.aar"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    implementation("org.apache.commons:commons-compress:1.27.1")
 }
 
 android {
@@ -18,8 +13,11 @@ android {
         applicationId = "com.thedailyflare.reel"
         minSdk = 26
         targetSdk = 35
-        versionCode = 44
-        versionName = "44-linebreak-display-fix"
+        versionCode = 45
+        versionName = "45-size-optimized"
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
