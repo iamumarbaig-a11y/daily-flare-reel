@@ -24,10 +24,10 @@ object CtaAlphaDecoder {
         }
 
         val pattern = File(dir, "frame_%05d.png")
-        // Explicitly force libvpx-vp9 as the decoder. WebM alpha is carried as
-        // Matroska BlockAdditional data and libvpx reconstructs the alpha plane.
+        // Force libvpx-vp9 as the decoder. WebM alpha is carried as Matroska
+        // BlockAdditional data and libvpx reconstructs the alpha plane.
         // format=rgba guarantees the PNG encoder receives a four-channel frame.
-        val command = "-y -loglevel error -map 0:v:0 -c:v libvpx-vp9 -i ${quote(input.absolutePath)} -vf fps=${FRAME_RATE.toInt()},format=rgba ${quote(pattern.absolutePath)}"
+        val command = "-y -loglevel error -c:v libvpx-vp9 -i ${quote(input.absolutePath)} -map 0:v:0 -vf fps=${FRAME_RATE.toInt()},format=rgba ${quote(pattern.absolutePath)}"
         val session = FFmpegKit.execute(command)
         input.delete()
 
