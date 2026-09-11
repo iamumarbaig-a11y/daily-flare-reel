@@ -20,8 +20,10 @@ class CtaEditorPreviewView(context: Context) : View(context) {
     private var originalY = 0f
     private var lastPinchDistance = 0f
     private var originalScale = 0f
+    private var interactionChanged = false
 
     var onOverlayChanged: ((Int, CtaOverlay) -> Unit)? = null
+    var onOverlayInteractionFinished: (() -> Unit)? = null
 
     private val tick = object : Runnable {
         override fun run() {
@@ -32,7 +34,7 @@ class CtaEditorPreviewView(context: Context) : View(context) {
     }
 
     fun setOverlays(value: List<CtaOverlay>, selected: Int = selectedIndex) {
-        overlays = value
+        overlays = value.toList()
         selectedIndex = selected.coerceIn(0, (overlays.size - 1).coerceAtLeast(0))
         rebuildRenderer()
         if (overlays.isNotEmpty()) startPlayback() else stopPlayback()
@@ -41,10 +43,15 @@ class CtaEditorPreviewView(context: Context) : View(context) {
 
     fun select(index: Int) {
         if (index !in overlays.indices) return
+        if (selectedIndex == index) return
         selectedIndex = index
+        // Selection is allowed to rebuild because it changes the media source.
+        rebuildRenderer()
         startedAt = SystemClock.elapsedRealtime()
         invalidate()
     }
+
+    fun getSelectedIndex(): Int = selectedIndex
 
     fun startPlayback() {
         removeCallbacks(tick)
@@ -91,6 +98,7 @@ class CtaEditorPreviewView(context: Context) : View(context) {
                 dragStartY = event.y
                 originalX = o.x
                 originalY = o.y
+                interactionChanged = false
                 parent?.requestDisallowInterceptTouchEvent(true)
                 return true
             }
@@ -98,6 +106,7 @@ class CtaEditorPreviewView(context: Context) : View(context) {
                 if (event.pointerCount >= 2) {
                     lastPinchDistance = pointerDistance(event)
                     originalScale = overlays[selectedIndex].scale
+                    interactionChanged = true
                     return true
                 }
             }
@@ -116,7 +125,10 @@ class CtaEditorPreviewView(context: Context) : View(context) {
                     updateOverlay(o.copy(x = x, y = y))
                     true
                 }
-                if (changed) invalidate()
+                if (changed) {
+                    interactionChanged = true
+                    invalidate()
+                }
                 return true
             }
             MotionEvent.ACTION_POINTER_UP -> {
@@ -126,6 +138,8 @@ class CtaEditorPreviewView(context: Context) : View(context) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 parent?.requestDisallowInterceptTouchEvent(false)
                 lastPinchDistance = 0f
+                if (interactionChanged) onOverlayInteractionFinished?.invoke()
+                interactionChanged = false
                 return true
             }
         }
@@ -134,7 +148,9 @@ class CtaEditorPreviewView(context: Context) : View(context) {
 
     private fun updateOverlay(value: CtaOverlay) {
         overlays = overlays.toMutableList().also { it[selectedIndex] = value }
-        rebuildRenderer()
+        // Position/scale changes only alter the transform. Keep the existing
+        // MediaMetadataRetriever and decoded frame cache alive for smooth dragging.
+        renderer?.updateOverlay(0, value)
         onOverlayChanged?.invoke(selectedIndex, value)
     }
 
