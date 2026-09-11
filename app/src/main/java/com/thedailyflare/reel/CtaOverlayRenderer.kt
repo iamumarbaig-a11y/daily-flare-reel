@@ -6,6 +6,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.media.MediaMetadataRetriever
+import android.graphics.BitmapFactory
+import java.io.File
 import java.util.LinkedHashMap
 
 /** Renders scheduled CTA video overlays. CTA videos loop for the full configured active duration. */
@@ -41,7 +43,6 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
         return drew
     }
 
-    /** Draws the first frame of every CTA while editing, regardless of timeline. */
     fun drawEditing(canvas: Canvas, width: Int, height: Int) {
         if (entries.isEmpty()) return
         entries.forEach { entry ->
@@ -82,15 +83,23 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
     }
 
     private fun frame(entry: Entry, relativeMs: Long): Bitmap? {
-        // Loop the source video instead of freezing on its final frame when the
-        // configured CTA duration is longer than the source video duration.
-        val sourcePositionMs = if (entry.sourceDurationMs > 1L) {
-            relativeMs % entry.sourceDurationMs
-        } else {
-            0L
+        val o = entry.overlay
+        if (!o.frameDir.isNullOrBlank()) {
+            val totalFrames = runCatching { File(o.frameDir).listFiles { f -> f.extension == "png" }?.size ?: 0 }.getOrDefault(0)
+            if (totalFrames > 0) {
+                val frameIndex = ((relativeMs.coerceAtLeast(0L) * o.frameRate) / 1000f).toInt().coerceIn(0, totalFrames - 1)
+                val key = "${o.frameDir}|$frameIndex"
+                cache[key]?.let { return it }
+                val file = File(o.frameDir, "frame_%05d.png".format(frameIndex))
+                val decoded = BitmapFactory.decodeFile(file.absolutePath) ?: return null
+                cache[key] = decoded
+                return decoded
+            }
         }
+
+        val sourcePositionMs = if (entry.sourceDurationMs > 1L) relativeMs % entry.sourceDurationMs else relativeMs
         val bucket = (sourcePositionMs / 66L) * 66L
-        val key = "${entry.overlay.uri}|$bucket"
+        val key = "${o.uri}|$bucket"
         cache[key]?.let { return it }
         val decoded = runCatching {
             if (android.os.Build.VERSION.SDK_INT >= 27) {
@@ -105,7 +114,6 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
         return prepared
     }
 
-    /** Removes green-screen backing and also handles pure-black backing assets. */
     private fun makeChromaKeyTransparent(source: Bitmap): Bitmap {
         val copy = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(copy.width * copy.height)
