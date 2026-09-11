@@ -13,6 +13,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.widget.addTextChangedListener
 
 class CtaOverlayActivity : Activity() {
     private val overlays = mutableListOf<CtaOverlay>()
@@ -128,7 +129,6 @@ class CtaOverlayActivity : Activity() {
                 setPadding(0, 10, 0, 10)
                 setOnClickListener {
                     selectedIndex = index
-                    preview.select(index)
                     preview.setOverlays(overlays, selectedIndex)
                     refreshList()
                 }
@@ -166,31 +166,31 @@ class CtaOverlayActivity : Activity() {
         preview.select(index)
         val o = overlays[index]
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 8, 24, 0) }
-        val start = field("Start time (ms)", o.startMs.toString())
-        val duration = field("Duration (ms)", o.durationMs.toString())
-        val x = field("X position (0-100%)", (o.x * 100).toInt().toString())
-        val y = field("Y position (0-100%)", (o.y * 100).toInt().toString())
-        val scale = field("Size (0-100%)", (o.scale * 100).toInt().toString())
-        listOf(start, duration, x, y, scale).forEach { box.addView(it) }
+        val startField = field("Start time (ms)", o.startMs.toString())
+        val durationField = field("Duration (ms)", o.durationMs.toString())
+        val xField = field("X position (0-100%)", (o.x * 100).toInt().toString())
+        val yField = field("Y position (0-100%)", (o.y * 100).toInt().toString())
+        val scaleField = field("Size (0-100%)", (o.scale * 100).toInt().toString())
+        listOf(startField, durationField, xField, yField, scaleField).forEach { box.addView(it) }
         val dialog = AlertDialog.Builder(this)
             .setTitle("Edit CTA ${index + 1}")
             .setView(box)
             .setPositiveButton("SAVE") { _, _ ->
-                applyFields(index, start, duration, x, y, scale)
+                applyFields(index, startField, durationField, xField, yField, scaleField)
             }
             .setNegativeButton("CANCEL", null)
             .create()
 
         val watcher = object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                val current = overlays[index]
+            override fun onTextChanged(s: CharSequence?, fieldStart: Int, before: Int, count: Int) {
+                val current = overlays.getOrNull(index) ?: return
                 overlays[index] = current.copy(
-                    startMs = start.valueLong(current.startMs),
-                    durationMs = duration.valueLong(current.durationMs).coerceAtLeast(1L),
-                    x = (x.valueFloat(current.x * 100f) / 100f).coerceIn(0f, 1f),
-                    y = (y.valueFloat(current.y * 100f) / 100f).coerceIn(0f, 1f),
-                    scale = (scale.valueFloat(current.scale * 100f) / 100f).coerceIn(0.03f, 1f)
+                    startMs = startField.valueLong(current.startMs),
+                    durationMs = durationField.valueLong(current.durationMs).coerceAtLeast(1L),
+                    x = (xField.valueFloat(current.x * 100f) / 100f).coerceIn(0f, 1f),
+                    y = (yField.valueFloat(current.y * 100f) / 100f).coerceIn(0f, 1f),
+                    scale = (scaleField.valueFloat(current.scale * 100f) / 100f).coerceIn(0.03f, 1f)
                 )
                 CtaOverlayStore.save(this@CtaOverlayActivity, overlays)
                 preview.setOverlays(overlays, index)
@@ -198,7 +198,7 @@ class CtaOverlayActivity : Activity() {
             }
             override fun afterTextChanged(s: android.text.Editable?) = Unit
         }
-        listOf(start, duration, x, y, scale).forEach { it.addTextChangedListener(watcher) }
+        listOf(startField, durationField, xField, yField, scaleField).forEach { it.addTextChangedListener(watcher) }
         dialog.show()
     }
 
