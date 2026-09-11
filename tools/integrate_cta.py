@@ -11,8 +11,7 @@ if 'CtaOverlayActivity::class.java' not in s:
         raise SystemExit('MainActivity UI anchor not found')
     p.write_text(s.replace(anchor, anchor + '\n        root.addView(button("CTA OVERLAY") { startActivity(Intent(this, CtaOverlayActivity::class.java)) }, lp())', 1))
 
-# Wire scheduled overlays into the narration frames only. The existing 3-second
-# OUTRO branch remains untouched.
+# Keep the existing export integration. The final 3-second OUTRO branch is untouched.
 p = root / 'app/src/main/java/com/thedailyflare/reel/ReelEncoder.kt'
 s = p.read_text()
 marker = 'val settledMask = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)'
@@ -35,9 +34,206 @@ if 'ctaOverlayRenderer.release()' not in s:
     s = s.replace(old, new, 1)
 p.write_text(s)
 
-# Green-screen renderer with black fallback.
-p = root / 'app/src/main/java/com/thedailyflare/reel/CtaOverlayRenderer.kt'
-p.write_text(r'''package com.thedailyflare.reel
+# Keep these files self-contained for the debug build.
+manifest = root / 'app/src/debug/AndroidManifest.xml'
+manifest.parent.mkdir(parents=True, exist_ok=True)
+manifest.write_text('''<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity android:name=".CtaOverlayActivity" android:exported="false" />
+    </application>
+</manifest>
+''')
+
+# Make the existing main preview interactive. It uses low-rate, scaled frame extraction
+# only for CTA preview, while the normal reel preview remains the existing Canvas renderer.
+preview = root / 'app/src/main/java/com/thedailyflare/reel/ReelPreviewView.kt'
+preview.write_text(r'''package com.thedailyflare.reel
+
+import android.content.Context
+import android.graphics.*
+import android.os.SystemClock
+import android.view.MotionEvent
+import android.view.View
+import kotlin.math.hypot
+
+class ReelPreviewView(context: Context) : View(context) {
+    var title: String = "Main heading"
+    var headlines: List<String> = emptyList()
+    var backgroundBitmap: Bitmap? = null
+    var ctaBitmap: Bitmap? = null
+    var showCta = false
+    var visualProgress = 0f
+    var effect: ReelEncoder.ImageEffect = ReelEncoder.ImageEffect.ZOOM_IN
+    var effectIntensity = 0.18f
+    var textPreviewProgress = 0f
+    var timelineDurationMs: Long = 12000L
+
+    private var textPlaybackStartedAtMs = 0L
+    private var textPlaybackRunning = false
+    private val textPlaybackTick = object : Runnable {
+        override fun run() {
+            if (!textPlaybackRunning) return
+            val words = ReelLayout.bodyWordCount(headlines)
+            if (words <= 0) {
+                textPlaybackRunning = false
+                textPreviewProgress = 0f
+                invalidate()
+                return
+            }
+            val elapsed = SystemClock.elapsedRealtime() - textPlaybackStartedAtMs
+            val duration = (words * 220L).coerceIn(900L, 9000L)
+            textPreviewProgress = (elapsed.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+            invalidate()
+            if (textPreviewProgress >= 1f) textPlaybackRunning = false else postDelayed(this, 16L)
+        }
+    }
+
+    private var ctaRenderer: CtaOverlayRenderer? = null
+    private var ctaOverlays: List<CtaOverlay> = emptyList()
+    private var lastCtaRefreshMs = 0L
+    private var draggingCtaIndex = -1
+    private var lastPinchDistance = 0f
+    private var dragging = false
+
+    fun playTextPreview() {
+        removeCallbacks(textPlaybackTick)
+        textPreviewProgress = 0f
+        textPlaybackStartedAtMs = SystemClock.elapsedRealtime()
+        textPlaybackRunning = true
+        post(textPlaybackTick)
+    }
+
+    override fun onMeasure(w: Int, h: Int) {
+        val width = MeasureSpec.getSize(w)
+        setMeasuredDimension(width, if (width > 0) (width * 16f / 9f).toInt() else 0)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val image = if (showCta) ctaBitmap else backgroundBitmap
+        image?.let {
+            val p = visualProgress.coerceIn(0f, 1f)
+            canvas.save()
+            when (effect) {
+                ReelEncoder.ImageEffect.ZOOM_IN -> canvas.scale(1f + effectIntensity * p, 1f + effectIntensity * p, width / 2f, height / 2f)
+                ReelEncoder.ImageEffect.ZOOM_OUT -> canvas.scale(1f + effectIntensity * (1f - p), 1f + effectIntensity * (1f - p), width / 2f, height / 2f)
+                ReelEncoder.ImageEffect.PAN_LEFT -> canvas.translate(-width * effectIntensity * p, 0f)
+                ReelEncoder.ImageEffect.PAN_RIGHT -> canvas.translate(width * effectIntensity * p, 0f)
+                ReelEncoder.ImageEffect.PAN_UP -> canvas.translate(0f, -height * effectIntensity * p)
+                ReelEncoder.ImageEffect.PAN_DOWN -> canvas.translate(0f, height * effectIntensity * p)
+                ReelEncoder.ImageEffect.KEN_BURNS -> { canvas.scale(1f + effectIntensity * p, 1f + effectIntensity * p, width / 2f, height / 2f); canvas.translate(-width * effectIntensity * p * .35f, -height * effectIntensity * p * .2f) }
+                ReelEncoder.ImageEffect.NONE -> Unit
+            }
+            ReelLayout.drawCover(canvas, it, width, height)
+            canvas.restore()
+        }
+        if (showCta) return
+
+        val total = ReelLayout.bodyWordCount(headlines)
+        val visible = if (total <= 0) 0 else kotlin.math.ceil(total * textPreviewProgress.coerceIn(0f, 1f)).toInt().coerceIn(0, total)
+        ReelLayout.draw(canvas, title, headlines, width, height, null, false, visible)
+
+        refreshCtaRendererIfNeeded()
+        val timelineMs = (visualProgress.coerceIn(0f, 1f) * timelineDurationMs.coerceAtLeast(1L)).toLong()
+        ctaRenderer?.draw(canvas, timelineMs, width, height)
+    }
+
+    private fun refreshCtaRendererIfNeeded() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastCtaRefreshMs < 250L) return
+        lastCtaRefreshMs = now
+        val latest = CtaOverlayStore.load(context)
+        if (latest != ctaOverlays) {
+            ctaRenderer?.release()
+            ctaOverlays = latest
+            ctaRenderer = if (latest.isEmpty()) null else CtaOverlayRenderer(context, latest)
+            if (draggingCtaIndex >= latest.size) draggingCtaIndex = -1
+        }
+    }
+
+    private fun currentTimelineMs(): Long = (visualProgress.coerceIn(0f, 1f) * timelineDurationMs.coerceAtLeast(1L)).toLong()
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (showCta) return false
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                refreshCtaRendererIfNeeded()
+                val index = ctaRenderer?.hitTest(currentTimelineMs(), event.x, event.y, width, height) ?: -1
+                if (index >= 0) {
+                    draggingCtaIndex = index
+                    dragging = true
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (dragging && event.pointerCount >= 2) {
+                    lastPinchDistance = pointerDistance(event)
+                    return true
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!dragging || draggingCtaIndex < 0) return false
+                val index = draggingCtaIndex
+                val current = ctaOverlays.getOrNull(index) ?: return true
+                if (event.pointerCount >= 2) {
+                    val d = pointerDistance(event)
+                    if (lastPinchDistance > 0f && d > 1f) {
+                        val factor = (d / lastPinchDistance).coerceIn(0.90f, 1.10f)
+                        ctaOverlays = ctaOverlays.toMutableList().also { it[index] = current.copy(scale = (current.scale * factor).coerceIn(0.05f, 0.80f)) }
+                        lastPinchDistance = d
+                    }
+                } else {
+                    val x = (event.x / width.toFloat()).coerceIn(0f, 1f)
+                    val y = (event.y / height.toFloat()).coerceIn(0f, 1f)
+                    ctaOverlays = ctaOverlays.toMutableList().also { it[index] = current.copy(x = x, y = y) }
+                }
+                rebuildCtaRenderer()
+                invalidate()
+                return true
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                lastPinchDistance = 0f
+                if (dragging) return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (dragging) {
+                    CtaOverlayStore.save(context, ctaOverlays)
+                    dragging = false
+                    draggingCtaIndex = -1
+                    lastPinchDistance = 0f
+                    parent?.requestDisallowInterceptTouchEvent(false)
+                    invalidate()
+                    return true
+                }
+            }
+        }
+        return true
+    }
+
+    private fun rebuildCtaRenderer() {
+        ctaRenderer?.release()
+        ctaRenderer = if (ctaOverlays.isEmpty()) null else CtaOverlayRenderer(context, ctaOverlays)
+    }
+
+    private fun pointerDistance(event: MotionEvent): Float {
+        if (event.pointerCount < 2) return 0f
+        return hypot(event.getX(1) - event.getX(0), event.getY(1) - event.getY(0))
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(textPlaybackTick)
+        textPlaybackRunning = false
+        ctaRenderer?.release()
+        ctaRenderer = null
+        super.onDetachedFromWindow()
+    }
+}
+''')
+
+# Efficient live preview renderer: decode scaled frames at ~15fps, not full-resolution 60fps.
+renderer = root / 'app/src/main/java/com/thedailyflare/reel/CtaOverlayRenderer.kt'
+s = r'''package com.thedailyflare.reel
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -68,22 +264,43 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
             val relative = timelineMs - o.startMs
             if (relative < 0L || relative >= o.durationMs) return@forEach
             val bitmap = frame(entry, relative) ?: return@forEach
-            val scale = o.scale.coerceIn(0.03f, 1f)
-            val targetW = width * scale
-            val aspect = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1)
-            val targetH = targetW / aspect
-            val cx = width * o.x.coerceIn(0f, 1f)
-            val cy = height * o.y.coerceIn(0f, 1f)
-            val dst = RectF(cx - targetW / 2f, cy - targetH / 2f, cx + targetW / 2f, cy + targetH / 2f)
-            canvas.drawBitmap(bitmap, null, dst, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            canvas.drawBitmap(bitmap, null, rectFor(o, bitmap, width, height), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
         }
     }
 
+    fun hitTest(timelineMs: Long, x: Float, y: Float, width: Int, height: Int): Int {
+        for (i in entries.indices.reversed()) {
+            val entry = entries[i]
+            val o = entry.overlay
+            val relative = timelineMs - o.startMs
+            if (relative < 0L || relative >= o.durationMs) continue
+            val bitmap = frame(entry, relative) ?: continue
+            if (rectFor(o, bitmap, width, height).contains(x, y)) return i
+        }
+        return -1
+    }
+
+    private fun rectFor(o: CtaOverlay, bitmap: Bitmap, width: Int, height: Int): RectF {
+        val scale = o.scale.coerceIn(0.03f, 1f)
+        val targetW = width * scale
+        val aspect = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1)
+        val targetH = targetW / aspect
+        val cx = width * o.x.coerceIn(0f, 1f)
+        val cy = height * o.y.coerceIn(0f, 1f)
+        return RectF(cx - targetW / 2f, cy - targetH / 2f, cx + targetW / 2f, cy + targetH / 2f)
+    }
+
     private fun frame(entry: Entry, relativeMs: Long): Bitmap? {
-        val bucket = (relativeMs / 33L) * 33L
+        val bucket = (relativeMs / 66L) * 66L
         val key = "${entry.overlay.uri}|$bucket"
         cache[key]?.let { return it }
-        val decoded = runCatching { entry.retriever.getFrameAtTime(relativeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST) }.getOrNull() ?: return null
+        val decoded = runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 27) {
+                entry.retriever.getScaledFrameAtTime(relativeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST, 540, 960)
+            } else {
+                entry.retriever.getFrameAtTime(relativeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
+            }
+        }.getOrNull() ?: return null
         val prepared = makeChromaKeyTransparent(decoded)
         if (prepared !== decoded) decoded.recycle()
         cache[key] = prepared
@@ -120,117 +337,13 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
 
     private data class Entry(val overlay: CtaOverlay, val retriever: MediaMetadataRetriever)
 }
-''')
+'''
+renderer.write_text(s)
 
-# Self-contained editor using the platform ActivityResult-free picker API.
-p = root / 'app/src/main/java/com/thedailyflare/reel/CtaOverlayActivity.kt'
-p.write_text(r'''package com.thedailyflare.reel
-
-import android.app.Activity
-import android.app.AlertDialog
-import android.content.Intent
-import android.media.MediaMetadataRetriever
-import android.net.Uri
-import android.os.Bundle
-import android.view.Gravity
-import android.view.ViewGroup
-import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.TextView
-
-class CtaOverlayActivity : Activity() {
-    private val overlays = mutableListOf<CtaOverlay>()
-    private lateinit var list: LinearLayout
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        overlays.addAll(CtaOverlayStore.load(this))
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(28, 28, 28, 28) }
-        root.addView(TextView(this).apply { text = "CTA OVERLAYS"; textSize = 22f; setPadding(0, 0, 0, 14) })
-        root.addView(TextView(this).apply { text = "Add green-screen CTA videos. Each overlay has its own start time, duration, position and size."; textSize = 15f; setPadding(0, 0, 0, 14) })
-        root.addView(Button(this).apply { text = "ADD CTA VIDEO"; setOnClickListener { pickVideo() } }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
-        root.addView(Button(this).apply { text = "SAVE & DONE"; setOnClickListener { CtaOverlayStore.save(this@CtaOverlayActivity, overlays); finish() } }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-        setContentView(root)
-        refreshList()
-    }
-
-    private fun pickVideo() {
-        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            type = "video/*"
-            addCategory(Intent.CATEGORY_OPENABLE)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-        }, 700)
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != 700 || resultCode != RESULT_OK || data?.data == null) return
-        val uri = data.data!!
-        try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
-        val duration = runCatching {
-            val r = MediaMetadataRetriever()
-            r.setDataSource(this, uri)
-            val value = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 3000L
-            r.release()
-            value
-        }.getOrDefault(3000L).coerceAtLeast(1L)
-        overlays.add(CtaOverlay(uri, 0L, duration, 0.82f, 0.80f, 0.25f))
-        refreshList()
-    }
-
-    private fun refreshList() {
-        list.removeAllViews()
-        overlays.forEachIndexed { index, overlay ->
-            val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 14, 0, 14) }
-            row.addView(TextView(this).apply { text = "CTA ${index + 1}: ${overlay.uri.lastPathSegment ?: "video"}"; textSize = 16f })
-            row.addView(TextView(this).apply { text = "Start ${overlay.startMs}ms · Duration ${overlay.durationMs}ms · X ${(overlay.x * 100).toInt()}% · Y ${(overlay.y * 100).toInt()}% · Size ${(overlay.scale * 100).toInt()}%"; textSize = 13f })
-            val actions = LinearLayout(this).apply { gravity = Gravity.END }
-            actions.addView(Button(this@CtaOverlayActivity).apply { text = "EDIT"; setOnClickListener { editOverlay(index) } })
-            actions.addView(Button(this@CtaOverlayActivity).apply { text = "DELETE"; setOnClickListener { overlays.removeAt(index); refreshList() } })
-            row.addView(actions)
-            list.addView(row)
-        }
-    }
-
-    private fun editOverlay(index: Int) {
-        val o = overlays[index]
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 8, 24, 0) }
-        val start = field("Start time (ms)", o.startMs.toString())
-        val duration = field("Duration (ms)", o.durationMs.toString())
-        val x = field("X position (0-100%)", (o.x * 100).toInt().toString())
-        val y = field("Y position (0-100%)", (o.y * 100).toInt().toString())
-        val scale = field("Size (0-100%)", (o.scale * 100).toInt().toString())
-        listOf(start, duration, x, y, scale).forEach { box.addView(it) }
-        AlertDialog.Builder(this).setTitle("Edit CTA ${index + 1}").setView(box).setPositiveButton("SAVE") { _, _ ->
-            overlays[index] = o.copy(
-                startMs = start.value().toLongOrNull()?.coerceAtLeast(0L) ?: o.startMs,
-                durationMs = duration.value().toLongOrNull()?.coerceAtLeast(1L) ?: o.durationMs,
-                x = (x.value().toFloatOrNull()?.div(100f) ?: o.x).coerceIn(0f, 1f),
-                y = (y.value().toFloatOrNull()?.div(100f) ?: o.y).coerceIn(0f, 1f),
-                scale = (scale.value().toFloatOrNull()?.div(100f) ?: o.scale).coerceIn(0.03f, 1f)
-            )
-            CtaOverlayStore.save(this, overlays)
-            refreshList()
-        }.setNegativeButton("CANCEL", null).show()
-    }
-
-    private fun field(hint: String, value: String): EditText = EditText(this).apply {
-        this.hint = hint
-        setText(value)
-        inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-    }
-    private fun EditText.value(): String = text.toString().trim()
-}
-''')
-
-manifest = root / 'app/src/debug/AndroidManifest.xml'
-manifest.parent.mkdir(parents=True, exist_ok=True)
-manifest.write_text('''<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application>
-        <activity android:name=".CtaOverlayActivity" android:exported="false" />
-    </application>
-</manifest>
-''')
+# Feed the actual visual-preview duration into the CTA timeline.
+p = root / 'app/src/main/java/com/thedailyflare/reel/MainActivity.kt'
+s = p.read_text()
+old = 'private fun updateVisualPreview(progress: Float) { visualPreviewLabel.text = "VISUAL PREVIEW ${(progress * 100).toInt()}%";'
+if old in s and 'preview.timelineDurationMs = visualPreviewDurationMs()' not in s:
+    s = s.replace(old, 'private fun updateVisualPreview(progress: Float) { preview.timelineDurationMs = visualPreviewDurationMs(); visualPreviewLabel.text = "VISUAL PREVIEW ${(progress * 100).toInt()}%";', 1)
+p.write_text(s)
