@@ -3,9 +3,11 @@ package com.thedailyflare.reel
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.database.Cursor
 import android.graphics.Color
 import android.media.MediaMetadataRetriever
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
@@ -56,12 +58,13 @@ class CtaOverlayActivity : Activity() {
         val uri = data?.data ?: return
         runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
 
-        // VP9 WebM alpha is not reliably exposed by Android's native video decoder.
-        // Always send WebM through the isolated FFmpeg/libvpx frame decoder first.
-        // MP4 and other normal videos keep the existing native path unchanged.
-        val name = runCatching { uri.path.orEmpty().lowercase() }.getOrDefault("")
+        // Providers often return a document URI whose path does not contain the
+        // original filename. Read the display name as well as MIME/URI so WebM
+        // cannot accidentally fall through to Android's native VP9 path.
+        val displayName = queryDisplayName(uri).orEmpty().lowercase()
+        val uriText = uri.toString().lowercase()
         val mime = runCatching { contentResolver.getType(uri).orEmpty().lowercase() }.getOrDefault("")
-        val isWebm = name.endsWith(".webm") || mime.contains("webm")
+        val isWebm = displayName.endsWith(".webm") || uriText.contains(".webm") || mime.contains("webm")
 
         if (!isWebm) {
             addOverlay(uri, null)
@@ -76,12 +79,20 @@ class CtaOverlayActivity : Activity() {
                     addOverlay(uri, frameDir.absolutePath)
                     Toast.makeText(this, "WebM CTA ready", Toast.LENGTH_SHORT).show()
                 } else {
-                    // If this WebM cannot be decoded by libvpx, retain the old native path.
-                    addOverlay(uri, null)
-                    Toast.makeText(this, "WebM alpha decode failed — using native video", Toast.LENGTH_LONG).show()
+                    // Never silently route a WebM alpha CTA back through the native
+                    // decoder. That is the path that loses VP9 alpha on Android.
+                    Toast.makeText(this, "WebM CTA could not be decoded", Toast.LENGTH_LONG).show()
                 }
             }
         }.start()
+    }
+
+    private fun queryDisplayName(uri: android.net.Uri): String? {
+        return runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor: Cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.getOrNull()
     }
 
     private fun addOverlay(uri: android.net.Uri, frameDir: String?) {
