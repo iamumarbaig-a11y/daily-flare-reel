@@ -58,29 +58,26 @@ class CtaOverlayActivity : Activity() {
         val uri = data?.data ?: return
         runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
 
-        // Providers often return a document URI whose path does not contain the
-        // original filename. Read the display name as well as MIME/URI so WebM
-        // cannot accidentally fall through to Android's native VP9 path.
         val displayName = queryDisplayName(uri).orEmpty().lowercase()
         val uriText = uri.toString().lowercase()
         val mime = runCatching { contentResolver.getType(uri).orEmpty().lowercase() }.getOrDefault("")
         val isWebm = displayName.endsWith(".webm") || uriText.contains(".webm") || mime.contains("webm")
 
         if (!isWebm) {
+            // Existing MP4/native CTA path is deliberately unchanged.
             addOverlay(uri, null)
             return
         }
 
+        // WebM uses the new Chromium/WebView alpha decoder. FFmpegKit is not involved.
         Toast.makeText(this, "Preparing WebM CTA…", Toast.LENGTH_SHORT).show()
         Thread {
-            val frameDir = CtaAlphaDecoder.decode(this, uri)
+            val result = CtaWebViewAlphaDecoder.decode(this, uri)
             runOnUiThread {
-                if (frameDir != null) {
-                    addOverlay(uri, frameDir.absolutePath)
+                if (result != null) {
+                    addOverlay(uri, result.frameDir.absolutePath, result.durationMs)
                     Toast.makeText(this, "WebM CTA ready", Toast.LENGTH_SHORT).show()
                 } else {
-                    // Never silently route a WebM alpha CTA back through the native
-                    // decoder. That is the path that loses VP9 alpha on Android.
                     Toast.makeText(this, "WebM CTA could not be decoded", Toast.LENGTH_LONG).show()
                 }
             }
@@ -95,8 +92,8 @@ class CtaOverlayActivity : Activity() {
         }.getOrNull()
     }
 
-    private fun addOverlay(uri: android.net.Uri, frameDir: String?) {
-        val duration = runCatching {
+    private fun addOverlay(uri: android.net.Uri, frameDir: String?, durationOverrideMs: Long? = null) {
+        val duration = durationOverrideMs?.coerceAtLeast(1L) ?: runCatching {
             val retriever = MediaMetadataRetriever()
             try {
                 retriever.setDataSource(this, uri)
@@ -105,7 +102,7 @@ class CtaOverlayActivity : Activity() {
                 runCatching { retriever.release() }
             }
         }.getOrNull()?.coerceAtLeast(1L) ?: 3000L
-        overlays.add(CtaOverlay(uri, 0L, duration, 0.5f, 0.5f, 0.25f, frameDir, CtaAlphaDecoder.FRAME_RATE))
+        overlays.add(CtaOverlay(uri, 0L, duration, 0.5f, 0.5f, 0.25f, frameDir, CtaWebViewAlphaDecoder.FRAME_RATE))
         selectedIndex = overlays.lastIndex
         CtaOverlayStore.save(this, overlays)
         refreshList()
