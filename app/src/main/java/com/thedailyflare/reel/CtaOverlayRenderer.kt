@@ -62,6 +62,29 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
         }
     }
 
+    /** Returns the topmost CTA whose visible rectangle contains the touch point at this timeline position. */
+    fun hitTest(timelineMs: Long, x: Float, y: Float, width: Int, height: Int): Int {
+        for (index in entries.indices.reversed()) {
+            val entry = entries[index]
+            val o = entry.overlay
+            val relative = timelineMs - o.startMs
+            if (relative < 0L || relative >= o.durationMs) continue
+            val bitmap = frame(entry, relative) ?: continue
+            if (rectFor(o, bitmap, width, height).contains(x, y)) return index
+        }
+        return -1
+    }
+
+    /** Hit-test using the first frame so a CTA can still be selected while outside its timeline window. */
+    fun hitTestEditing(x: Float, y: Float, width: Int, height: Int): Int {
+        for (index in entries.indices.reversed()) {
+            val entry = entries[index]
+            val bitmap = frame(entry, 0L) ?: continue
+            if (rectFor(entry.overlay, bitmap, width, height).contains(x, y)) return index
+        }
+        return -1
+    }
+
     private fun rectFor(o: CtaOverlay, bitmap: Bitmap, width: Int, height: Int): RectF {
         val scale = o.scale.coerceIn(0.03f, 1f)
         val targetW = width * scale
