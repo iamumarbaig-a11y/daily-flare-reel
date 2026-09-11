@@ -22,25 +22,14 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
         }
     }
 
-    fun draw(canvas: Canvas, timelineMs: Long, width: Int, height: Int): Boolean {
-        if (entries.isEmpty()) return false
-        var drew = false
+    fun draw(canvas: Canvas, timelineMs: Long, width: Int, height: Int) {
+        if (entries.isEmpty()) return
         entries.forEach { entry ->
             val o = entry.overlay
             val relative = timelineMs - o.startMs
             if (relative < 0L || relative >= o.durationMs) return@forEach
             val bitmap = frame(entry, relative) ?: return@forEach
             canvas.drawBitmap(bitmap, null, rectFor(o, bitmap, width, height), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-            drew = true
-        }
-        return drew
-    }
-
-    /** Draw all configured CTAs at their first video frame so they remain editable even when the playhead is outside their schedule. */
-    fun drawEditing(canvas: Canvas, width: Int, height: Int) {
-        entries.forEach { entry ->
-            val bitmap = frame(entry, 0L) ?: return@forEach
-            canvas.drawBitmap(bitmap, null, rectFor(entry.overlay, bitmap, width, height), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
         }
     }
 
@@ -52,15 +41,6 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
             if (relative < 0L || relative >= o.durationMs) continue
             val bitmap = frame(entry, relative) ?: continue
             if (rectFor(o, bitmap, width, height).contains(x, y)) return i
-        }
-        return -1
-    }
-
-    fun hitTestEditing(x: Float, y: Float, width: Int, height: Int): Int {
-        for (i in entries.indices.reversed()) {
-            val entry = entries[i]
-            val bitmap = frame(entry, 0L) ?: continue
-            if (rectFor(entry.overlay, bitmap, width, height).contains(x, y)) return i
         }
         return -1
     }
