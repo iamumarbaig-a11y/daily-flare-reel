@@ -75,9 +75,12 @@ class CtaOverlayActivity : Activity() {
 
     private fun addOverlay(uri: android.net.Uri, frameDir: String?) {
         val duration = runCatching {
-            MediaMetadataRetriever().use { retriever ->
+            val retriever = MediaMetadataRetriever()
+            try {
                 retriever.setDataSource(this, uri)
                 retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+            } finally {
+                runCatching { retriever.release() }
             }
         }.getOrNull()?.coerceAtLeast(1L) ?: 3000L
         overlays.add(CtaOverlay(uri, 0L, duration, 0.5f, 0.5f, 0.25f, frameDir, CtaAlphaDecoder.FRAME_RATE))
