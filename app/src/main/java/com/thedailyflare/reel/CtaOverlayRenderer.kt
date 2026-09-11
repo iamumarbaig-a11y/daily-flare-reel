@@ -10,23 +10,10 @@ import android.media.MediaMetadataRetriever
 import java.io.File
 import java.util.LinkedHashMap
 
-/** Renders scheduled CTA video overlays. CTA videos loop for the full configured active duration. */
+/** Renders scheduled CTA video overlays without rebuilding the decoder during transforms. */
 class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay>) {
-    private val entries = overlays.mapNotNull { overlay ->
-        runCatching {
-            // Transparent WebM overlays are decoded to RGBA PNG frames by CtaAlphaDecoder.
-            // Do not require Android's MediaMetadataRetriever for that path: native VP9 alpha
-            // decoding is exactly what we are avoiding here.
-            if (!overlay.frameDir.isNullOrBlank()) {
-                Entry(overlay, null, overlay.durationMs.coerceAtLeast(1L))
-            } else {
-                val retriever = MediaMetadataRetriever().also { it.setDataSource(context, overlay.uri) }
-                val sourceDurationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                    ?.toLongOrNull()?.coerceAtLeast(1L) ?: 1L
-                Entry(overlay, retriever, sourceDurationMs)
-            }
-        }.getOrNull()
-    }
+    private val entries = overlays.mapNotNull { createEntry(it) }.toMutableList()
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
     private val cache = object : LinkedHashMap<String, Bitmap>(12, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>?): Boolean {
@@ -34,6 +21,23 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
             if (remove) eldest?.value?.recycle()
             return remove
         }
+    }
+
+    private fun createEntry(overlay: CtaOverlay): Entry? = runCatching {
+        if (!overlay.frameDir.isNullOrBlank()) {
+            Entry(overlay, null, overlay.durationMs.coerceAtLeast(1L))
+        } else {
+            val retriever = MediaMetadataRetriever().also { it.setDataSource(context, overlay.uri) }
+            val sourceDurationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()?.coerceAtLeast(1L) ?: 1L
+            Entry(overlay, retriever, sourceDurationMs)
+        }
+    }.getOrNull()
+
+    /** Update transform/timing data in-place. Decoder and frame cache stay alive. */
+    fun updateOverlay(index: Int, overlay: CtaOverlay) {
+        if (index !in entries.indices) return
+        entries[index] = entries[index].copy(overlay = overlay)
     }
 
     fun draw(canvas: Canvas, timelineMs: Long, width: Int, height: Int): Boolean {
@@ -44,7 +48,7 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
             val relative = timelineMs - o.startMs
             if (relative < 0L || relative >= o.durationMs) return@forEach
             val bitmap = frame(entry, relative) ?: return@forEach
-            canvas.drawBitmap(bitmap, null, rectFor(o, bitmap, width, height), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            canvas.drawBitmap(bitmap, null, rectFor(o, bitmap, width, height), paint)
             drew = true
         }
         return drew
@@ -54,29 +58,8 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
         if (entries.isEmpty()) return
         entries.forEach { entry ->
             val bitmap = frame(entry, 0L) ?: return@forEach
-            canvas.drawBitmap(bitmap, null, rectFor(entry.overlay, bitmap, width, height), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            canvas.drawBitmap(bitmap, null, rectFor(entry.overlay, bitmap, width, height), paint)
         }
-    }
-
-    fun hitTest(timelineMs: Long, x: Float, y: Float, width: Int, height: Int): Int {
-        for (i in entries.indices.reversed()) {
-            val entry = entries[i]
-            val o = entry.overlay
-            val relative = timelineMs - o.startMs
-            if (relative < 0L || relative >= o.durationMs) continue
-            val bitmap = frame(entry, relative) ?: continue
-            if (rectFor(o, bitmap, width, height).contains(x, y)) return i
-        }
-        return -1
-    }
-
-    fun hitTestEditing(x: Float, y: Float, width: Int, height: Int): Int {
-        for (i in entries.indices.reversed()) {
-            val entry = entries[i]
-            val bitmap = frame(entry, 0L) ?: continue
-            if (rectFor(entry.overlay, bitmap, width, height).contains(x, y)) return i
-        }
-        return -1
     }
 
     private fun rectFor(o: CtaOverlay, bitmap: Bitmap, width: Int, height: Int): RectF {
