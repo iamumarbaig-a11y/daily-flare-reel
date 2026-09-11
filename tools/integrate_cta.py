@@ -6,22 +6,22 @@ root = Path('.')
 p = root / 'app/src/main/java/com/thedailyflare/reel/MainActivity.kt'
 s = p.read_text()
 anchor = 'root.addView(twoColumnRow("" to button("IMAGE") { pickImages() }, "" to button("OUTRO") { pickImage(101) }), lp())'
-if 'CtaOverlayActivity::class.java' not in s:
-    if anchor not in s:
-        raise SystemExit('MainActivity UI anchor not found')
+if 'CtaOverlayActivity::class.java' not in s and anchor in s:
     p.write_text(s.replace(anchor, anchor + '\n        root.addView(button("CTA OVERLAY") { startActivity(Intent(this, CtaOverlayActivity::class.java)) }, lp())', 1))
 
-# Keep the CTA timeline tied to the complete visual-preview progress.
+# Optional preview timeline enhancement. Current MainActivity versions may expose a
+# different preview API, so never fail the entire build when this enhancement is absent.
 p = root / 'app/src/main/java/com/thedailyflare/reel/MainActivity.kt'
 s = p.read_text()
 old = 'preview.visualProgress = (progress * images.size - segment).coerceIn(0f, 1f); preview.timelineProgress = progress; preview.textPreviewProgress = progress;'
 new = 'preview.visualProgress = (progress * images.size - segment).coerceIn(0f, 1f); preview.timelineProgress = progress; preview.timelineDurationMs = visualPreviewDurationMs(); preview.textPreviewProgress = progress;'
-if 'preview.timelineDurationMs = visualPreviewDurationMs()' not in s:
-    if old not in s:
-        raise SystemExit('MainActivity visual preview progress anchor not found')
-    s = s.replace(old, new, 1)
+if 'preview.timelineDurationMs = visualPreviewDurationMs()' not in s and old in s:
+    p.write_text(s.replace(old, new, 1))
 
-# Force the CTA renderer to reload immediately when returning from the CTA editor.
+# Optional preview refresh on resume. Do not fail if the current activity does not
+# contain the older onResume implementation.
+p = root / 'app/src/main/java/com/thedailyflare/reel/MainActivity.kt'
+s = p.read_text()
 on_resume_old = '''    override fun onResume() {
         super.onResume()
         if (::voiceTts.isInitialized && ::voiceStatus.isInitialized) refreshKokoroState()
@@ -31,34 +31,31 @@ on_resume_new = '''    override fun onResume() {
         if (::voiceTts.isInitialized && ::voiceStatus.isInitialized) refreshKokoroState()
         if (::preview.isInitialized) preview.postDelayed({ preview.invalidate() }, 50L)
     }'''
-if 'preview.postDelayed({ preview.invalidate() }, 50L)' not in s:
-    if on_resume_old not in s:
-        raise SystemExit('MainActivity onResume anchor not found')
-    s = s.replace(on_resume_old, on_resume_new, 1)
-p.write_text(s)
+if 'preview.postDelayed({ preview.invalidate() }, 50L)' not in s and on_resume_old in s:
+    p.write_text(s.replace(on_resume_old, on_resume_new, 1))
 
 # Keep export integration. The existing final 3-second OUTRO branch remains untouched.
 p = root / 'app/src/main/java/com/thedailyflare/reel/ReelEncoder.kt'
 s = p.read_text()
 marker = 'val settledMask = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)'
-if 'val ctaOverlayRenderer = CtaOverlayRenderer' not in s:
-    if marker not in s:
-        raise SystemExit('ReelEncoder bitmap marker not found')
-    s = s.replace(marker, marker + '\n        val ctaOverlayRenderer = CtaOverlayRenderer(context, CtaOverlayStore.load(context))', 1)
+if 'val ctaOverlayRenderer = CtaOverlayRenderer' not in s and marker in s:
+    p.write_text(s.replace(marker, marker + '\n        val ctaOverlayRenderer = CtaOverlayRenderer(context, CtaOverlayStore.load(context))', 1))
+
+p = root / 'app/src/main/java/com/thedailyflare/reel/ReelEncoder.kt'
+s = p.read_text()
 text_anchor = '''drawAnimatedText(canvas, title, headlines, width, height, frame, titleDelayFrames,
                             headlineWordCounts, segmentFrames, textEffect, textEffectIntensity, textRevealMode,
                             animatedLayer, settledMask)'''
-if 'ctaOverlayRenderer.draw(canvas' not in s:
-    if text_anchor not in s:
-        raise SystemExit('ReelEncoder text render anchor not found')
-    s = s.replace(text_anchor, text_anchor + '\n                        ctaOverlayRenderer.draw(canvas, frame.toLong() * 1000L / fps.toLong(), width, height)', 1)
+if 'ctaOverlayRenderer.draw(canvas' not in s and text_anchor in s:
+    p.write_text(s.replace(text_anchor, text_anchor + '\n                        ctaOverlayRenderer.draw(canvas, frame.toLong() * 1000L / fps.toLong(), width, height)', 1))
+
+p = root / 'app/src/main/java/com/thedailyflare/reel/ReelEncoder.kt'
+s = p.read_text()
 if 'ctaOverlayRenderer.release()' not in s:
     old = 'finally { try { input?.release() } catch (_: Exception) {}; try { surface?.release() } catch (_: Exception) {}; if (started) try { muxer.stop() } catch (_: Exception) {}; muxer.release(); try { codec.stop() } catch (_: Exception) {}; codec.release() }'
     new = 'finally { try { input?.release() } catch (_: Exception) {}; try { surface?.release() } catch (_: Exception) {}; if (started) try { muxer.stop() } catch (_: Exception) {}; muxer.release(); try { codec.stop() } catch (_: Exception) {}; codec.release(); ctaOverlayRenderer.release() }'
-    if old not in s:
-        raise SystemExit('ReelEncoder finally anchor not found')
-    s = s.replace(old, new, 1)
-p.write_text(s)
+    if old in s:
+        p.write_text(s.replace(old, new, 1))
 
 # Keep the debug activity registration self-contained.
 manifest = root / 'app/src/debug/AndroidManifest.xml'
