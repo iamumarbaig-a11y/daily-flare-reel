@@ -14,12 +14,28 @@ if 'CtaOverlayActivity::class.java' not in s:
 # Keep the CTA timeline tied to the complete visual-preview progress.
 p = root / 'app/src/main/java/com/thedailyflare/reel/MainActivity.kt'
 s = p.read_text()
-old = 'preview.visualProgress = (progress * images.size - segment).coerceIn(0f, 1f); preview.textPreviewProgress = progress;'
-new = 'preview.visualProgress = (progress * images.size - segment).coerceIn(0f, 1f); preview.timelineProgress = progress; preview.textPreviewProgress = progress;'
-if 'preview.timelineProgress = progress' not in s:
+old = 'preview.visualProgress = (progress * images.size - segment).coerceIn(0f, 1f); preview.timelineProgress = progress; preview.textPreviewProgress = progress;'
+new = 'preview.visualProgress = (progress * images.size - segment).coerceIn(0f, 1f); preview.timelineProgress = progress; preview.timelineDurationMs = visualPreviewDurationMs(); preview.textPreviewProgress = progress;'
+if 'preview.timelineDurationMs = visualPreviewDurationMs()' not in s:
     if old not in s:
         raise SystemExit('MainActivity visual preview progress anchor not found')
-    p.write_text(s.replace(old, new, 1))
+    s = s.replace(old, new, 1)
+
+# Force the CTA renderer to reload immediately when returning from the CTA editor.
+on_resume_old = '''    override fun onResume() {
+        super.onResume()
+        if (::voiceTts.isInitialized && ::voiceStatus.isInitialized) refreshKokoroState()
+    }'''
+on_resume_new = '''    override fun onResume() {
+        super.onResume()
+        if (::voiceTts.isInitialized && ::voiceStatus.isInitialized) refreshKokoroState()
+        if (::preview.isInitialized) preview.postDelayed({ preview.invalidate() }, 50L)
+    }'''
+if 'preview.postDelayed({ preview.invalidate() }, 50L)' not in s:
+    if on_resume_old not in s:
+        raise SystemExit('MainActivity onResume anchor not found')
+    s = s.replace(on_resume_old, on_resume_new, 1)
+p.write_text(s)
 
 # Keep export integration. The existing final 3-second OUTRO branch remains untouched.
 p = root / 'app/src/main/java/com/thedailyflare/reel/ReelEncoder.kt'
