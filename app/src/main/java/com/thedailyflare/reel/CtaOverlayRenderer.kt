@@ -8,10 +8,15 @@ import android.graphics.RectF
 import android.media.MediaMetadataRetriever
 import java.util.LinkedHashMap
 
-/** Renders scheduled CTA video overlays on top of the narration section. */
+/** Renders scheduled CTA video overlays. CTA videos loop for the full configured active duration. */
 class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay>) {
     private val entries = overlays.mapNotNull { overlay ->
-        runCatching { Entry(overlay, MediaMetadataRetriever().also { it.setDataSource(context, overlay.uri) }) }.getOrNull()
+        runCatching {
+            val retriever = MediaMetadataRetriever().also { it.setDataSource(context, overlay.uri) }
+            val sourceDurationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()?.coerceAtLeast(1L) ?: 1L
+            Entry(overlay, retriever, sourceDurationMs)
+        }.getOrNull()
     }
 
     private val cache = object : LinkedHashMap<String, Bitmap>(12, 0.75f, true) {
@@ -57,7 +62,6 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
         return -1
     }
 
-    /** Hit testing for the always-visible editing frame. */
     fun hitTestEditing(x: Float, y: Float, width: Int, height: Int): Int {
         for (i in entries.indices.reversed()) {
             val entry = entries[i]
@@ -78,14 +82,21 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
     }
 
     private fun frame(entry: Entry, relativeMs: Long): Bitmap? {
-        val bucket = (relativeMs / 66L) * 66L
+        // Loop the source video instead of freezing on its final frame when the
+        // configured CTA duration is longer than the source video duration.
+        val sourcePositionMs = if (entry.sourceDurationMs > 1L) {
+            relativeMs % entry.sourceDurationMs
+        } else {
+            0L
+        }
+        val bucket = (sourcePositionMs / 66L) * 66L
         val key = "${entry.overlay.uri}|$bucket"
         cache[key]?.let { return it }
         val decoded = runCatching {
             if (android.os.Build.VERSION.SDK_INT >= 27) {
-                entry.retriever.getScaledFrameAtTime(relativeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST, 540, 960)
+                entry.retriever.getScaledFrameAtTime(sourcePositionMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST, 540, 960)
             } else {
-                entry.retriever.getFrameAtTime(relativeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
+                entry.retriever.getFrameAtTime(sourcePositionMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
             }
         }.getOrNull() ?: return null
         val prepared = makeChromaKeyTransparent(decoded)
@@ -122,5 +133,9 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
         cache.clear()
     }
 
-    private data class Entry(val overlay: CtaOverlay, val retriever: MediaMetadataRetriever)
+    private data class Entry(
+        val overlay: CtaOverlay,
+        val retriever: MediaMetadataRetriever,
+        val sourceDurationMs: Long
+    )
 }
