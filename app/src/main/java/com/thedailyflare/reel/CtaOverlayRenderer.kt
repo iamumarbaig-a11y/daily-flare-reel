@@ -2,11 +2,11 @@ package com.thedailyflare.reel
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.media.MediaMetadataRetriever
-import android.graphics.BitmapFactory
 import java.io.File
 import java.util.LinkedHashMap
 
@@ -14,10 +14,17 @@ import java.util.LinkedHashMap
 class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay>) {
     private val entries = overlays.mapNotNull { overlay ->
         runCatching {
-            val retriever = MediaMetadataRetriever().also { it.setDataSource(context, overlay.uri) }
-            val sourceDurationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                ?.toLongOrNull()?.coerceAtLeast(1L) ?: 1L
-            Entry(overlay, retriever, sourceDurationMs)
+            // Transparent WebM overlays are decoded to RGBA PNG frames by CtaAlphaDecoder.
+            // Do not require Android's MediaMetadataRetriever for that path: native VP9 alpha
+            // decoding is exactly what we are avoiding here.
+            if (!overlay.frameDir.isNullOrBlank()) {
+                Entry(overlay, null, overlay.durationMs.coerceAtLeast(1L))
+            } else {
+                val retriever = MediaMetadataRetriever().also { it.setDataSource(context, overlay.uri) }
+                val sourceDurationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toLongOrNull()?.coerceAtLeast(1L) ?: 1L
+                Entry(overlay, retriever, sourceDurationMs)
+            }
         }.getOrNull()
     }
 
@@ -85,27 +92,39 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
     private fun frame(entry: Entry, relativeMs: Long): Bitmap? {
         val o = entry.overlay
         if (!o.frameDir.isNullOrBlank()) {
-            val totalFrames = runCatching { File(o.frameDir).listFiles { f -> f.extension == "png" }?.size ?: 0 }.getOrDefault(0)
-            if (totalFrames > 0) {
-                val frameIndex = ((relativeMs.coerceAtLeast(0L) * o.frameRate) / 1000f).toInt().coerceIn(0, totalFrames - 1)
-                val key = "${o.frameDir}|$frameIndex"
+            val files = runCatching {
+                File(o.frameDir).listFiles { f -> f.isFile && f.extension.equals("png", ignoreCase = true) }
+                    ?.sortedBy { it.name }
+                    ?: emptyList()
+            }.getOrDefault(emptyList())
+            if (files.isNotEmpty()) {
+                val frameIndex = ((relativeMs.coerceAtLeast(0L) * o.frameRate) / 1000f)
+                    .toInt().coerceIn(0, files.lastIndex)
+                val file = files[frameIndex]
+                val key = "${o.frameDir}|${file.name}"
                 cache[key]?.let { return it }
-                val file = File(o.frameDir, "frame_%05d.png".format(frameIndex))
                 val decoded = BitmapFactory.decodeFile(file.absolutePath) ?: return null
+                if (decoded.config != Bitmap.Config.ARGB_8888) {
+                    val rgba = decoded.copy(Bitmap.Config.ARGB_8888, true)
+                    decoded.recycle()
+                    cache[key] = rgba
+                    return rgba
+                }
                 cache[key] = decoded
                 return decoded
             }
         }
 
+        val retriever = entry.retriever ?: return null
         val sourcePositionMs = if (entry.sourceDurationMs > 1L) relativeMs % entry.sourceDurationMs else relativeMs
         val bucket = (sourcePositionMs / 66L) * 66L
         val key = "${o.uri}|$bucket"
         cache[key]?.let { return it }
         val decoded = runCatching {
             if (android.os.Build.VERSION.SDK_INT >= 27) {
-                entry.retriever.getScaledFrameAtTime(sourcePositionMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST, 540, 960)
+                retriever.getScaledFrameAtTime(sourcePositionMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST, 540, 960)
             } else {
-                entry.retriever.getFrameAtTime(sourcePositionMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
+                retriever.getFrameAtTime(sourcePositionMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
             }
         }.getOrNull() ?: return null
         val prepared = makeChromaKeyTransparent(decoded)
@@ -136,14 +155,14 @@ class CtaOverlayRenderer(private val context: Context, overlays: List<CtaOverlay
     }
 
     fun release() {
-        entries.forEach { runCatching { it.retriever.release() } }
+        entries.forEach { runCatching { it.retriever?.release() } }
         cache.values.forEach { runCatching { if (!it.isRecycled) it.recycle() } }
         cache.clear()
     }
 
     private data class Entry(
         val overlay: CtaOverlay,
-        val retriever: MediaMetadataRetriever,
+        val retriever: MediaMetadataRetriever?,
         val sourceDurationMs: Long
     )
 }
