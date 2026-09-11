@@ -3,6 +3,7 @@ package com.thedailyflare.reel
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.graphics.Color
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.net.Uri
@@ -144,10 +145,14 @@ class CtaOverlayActivity : Activity() {
             val actions = LinearLayout(this).apply { gravity = Gravity.END }
             actions.addView(Button(this@CtaOverlayActivity).apply {
                 text = "EDIT"
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(211, 47, 47))
                 setOnClickListener { editOverlay(index) }
             })
             actions.addView(Button(this@CtaOverlayActivity).apply {
                 text = "DELETE"
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(211, 47, 47))
                 setOnClickListener {
                     overlays.removeAt(index)
                     selectedIndex = selectedIndex.coerceIn(0, (overlays.size - 1).coerceAtLeast(0))
