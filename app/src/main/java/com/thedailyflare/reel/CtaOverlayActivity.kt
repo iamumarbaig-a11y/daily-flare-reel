@@ -1,90 +1,43 @@
 package com.thedailyflare.reel
 
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
-import android.media.MediaMetadataRetriever
-import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
-import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
 
-class CtaOverlayActivity : Activity() {
-    private val overlays = mutableListOf<CtaOverlay>()
+class CtaOverlayActivity : AppCompatActivity() {
     private lateinit var list: LinearLayout
     private lateinit var preview: CtaEditorPreviewView
-    private var selectedIndex = 0
+    private var overlays = mutableListOf<CtaOverlay>()
+    private var selectedIndex = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        overlays.addAll(CtaOverlayStore.load(this).map { overlay ->
-            val detected = detectDurationMs(overlay.uri)
-            if (overlay.durationMs < 100L && detected > 100L) overlay.copy(durationMs = detected) else overlay
-        })
-        CtaOverlayStore.save(this, overlays)
-
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(20, 20, 20, 20)
-        }
-        root.addView(TextView(this).apply {
-            text = "CTA OVERLAYS"
-            textSize = 22f
-            setPadding(0, 0, 0, 8)
-        })
-        root.addView(TextView(this).apply {
-            text = "Drag the CTA directly on the preview. Pinch to resize. It loops so you can see the video animation."
-            textSize = 14f
-            setPadding(0, 0, 0, 10)
-        })
-
+        overlays = CtaOverlayStore.load(this).toMutableList()
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(16, 16, 16, 16) }
         preview = CtaEditorPreviewView(this)
-        preview.onOverlayChanged = { index, value ->
-            if (index in overlays.indices) {
-                overlays[index] = value
-                CtaOverlayStore.save(this, overlays)
-                refreshList()
-            }
-        }
-        root.addView(preview, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-        root.addView(Button(this).apply {
-            text = "ADD CTA VIDEO"
-            setOnClickListener { pickVideo() }
-        }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-
+        root.addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        val add = Button(this).apply { text = "ADD CTA VIDEO"; setOnClickListener { pickVideo() } }
+        root.addView(add)
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
-        root.addView(Button(this).apply {
-            text = "SAVE & DONE"
-            setOnClickListener { saveAndFinish() }
-        }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val done = Button(this).apply { text = "SAVE & DONE"; setOnClickListener { CtaOverlayStore.save(this@CtaOverlayActivity, overlays); finish() } }
+        root.addView(done)
         setContentView(root)
         refreshList()
-        preview.setOverlays(overlays, selectedIndex)
     }
 
-    private fun saveAndFinish() {
-        CtaOverlayStore.save(this, overlays)
-        setResult(RESULT_OK)
-        finish()
-    }
-
-    override fun onPause() {
-        CtaOverlayStore.save(this, overlays)
-        super.onPause()
-    }
+    override fun onResume() { super.onResume(); preview.startPlayback() }
+    override fun onPause() { preview.stopPlayback(); super.onPause() }
 
     private fun pickVideo() {
-        // Some Android document providers incorrectly classify WebM as application/octet-stream
-        // or expose it without a video MIME type. Any MIME filter can therefore hide the file.
-        // Open the document picker without MIME filtering so WebM files are selectable too.
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             type = "*/*"
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -92,66 +45,37 @@ class CtaOverlayActivity : Activity() {
         }, 700)
     }
 
+    @Deprecated("Deprecated in Android SDK")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != 700 || resultCode != RESULT_OK || data?.data == null) return
-        val uri = data.data!!
-        try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
-        val duration = detectDurationMs(uri).coerceAtLeast(1000L)
-        overlays.add(CtaOverlay(uri, 0L, duration, 0.50f, 0.50f, 0.25f))
+        if (requestCode != 700 || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        overlays.add(CtaOverlay(uri, 0L, 3000L, 0.5f, 0.5f, 0.25f))
         selectedIndex = overlays.lastIndex
         CtaOverlayStore.save(this, overlays)
         refreshList()
         preview.setOverlays(overlays, selectedIndex)
     }
 
-    private fun detectDurationMs(uri: Uri): Long {
-        val retrieverDuration = runCatching {
-            MediaMetadataRetriever().use { r ->
-                r.setDataSource(this, uri)
-                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-            }
-        }.getOrDefault(0L)
-        if (retrieverDuration >= 100L) return retrieverDuration
-
-        val playerDuration = runCatching {
-            MediaPlayer.create(this, uri)?.let { player ->
-                val d = player.duration.toLong()
-                player.release()
-                d
-            } ?: 0L
-        }.getOrDefault(0L)
-        return playerDuration.coerceAtLeast(0L)
-    }
-
     private fun refreshList() {
         list.removeAllViews()
         overlays.forEachIndexed { index, overlay ->
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(0, 10, 0, 10)
-                setOnClickListener {
-                    selectedIndex = index
-                    preview.setOverlays(overlays, selectedIndex)
-                    refreshList()
-                }
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            val label = TextView(this).apply {
+                text = "CTA ${index + 1}  •  ${overlay.startMs}ms → ${overlay.startMs + overlay.durationMs}ms"
+                setPadding(8, 12, 8, 12)
+                setOnClickListener { selectedIndex = index; preview.select(index) }
             }
-            row.addView(TextView(this).apply {
-                text = "CTA ${index + 1}: ${overlay.uri.lastPathSegment ?: "video"}${if (index == selectedIndex) "  ← SELECTED" else ""}"
-                textSize = 16f
-            })
-            row.addView(TextView(this).apply {
-                text = "Start ${overlay.startMs}ms · Duration ${overlay.durationMs}ms · X ${(overlay.x * 100).toInt()}% · Y ${(overlay.y * 100).toInt()}% · Size ${(overlay.scale * 100).toInt()}%"
-                textSize = 13f
-            })
-            val actions = LinearLayout(this).apply { gravity = Gravity.END }
-            actions.addView(Button(this@CtaOverlayActivity).apply {
+            row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            val actions = LinearLayout(this)
+            actions.addView(Button(this).apply {
                 text = "EDIT"
                 setTextColor(Color.WHITE)
                 setBackgroundColor(Color.rgb(211, 47, 47))
                 setOnClickListener { editOverlay(index) }
             })
-            actions.addView(Button(this@CtaOverlayActivity).apply {
+            actions.addView(Button(this).apply {
                 text = "DELETE"
                 setTextColor(Color.WHITE)
                 setBackgroundColor(Color.rgb(211, 47, 47))
@@ -166,7 +90,17 @@ class CtaOverlayActivity : Activity() {
             row.addView(actions)
             list.addView(row)
         }
+        preview.setOverlays(overlays, selectedIndex)
     }
+
+    private fun field(label: String, value: String): EditText = EditText(this).apply {
+        hint = label
+        setText(value)
+        inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+    }
+
+    private fun EditText.valueLong(fallback: Long): Long = text.toString().trim().toLongOrNull() ?: fallback
+    private fun EditText.valueFloat(fallback: Float): Float = text.toString().trim().toFloatOrNull() ?: fallback
 
     private fun editOverlay(index: Int) {
         selectedIndex = index
@@ -179,34 +113,21 @@ class CtaOverlayActivity : Activity() {
         val yField = field("Y position (0-100%)", (o.y * 100).toInt().toString())
         val scaleField = field("Size (0-100%)", (o.scale * 100).toInt().toString())
         listOf(startField, durationField, xField, yField, scaleField).forEach { box.addView(it) }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Edit CTA ${index + 1}")
-            .setView(box)
-            .setPositiveButton("SAVE") { _, _ ->
-                applyFields(index, startField, durationField, xField, yField, scaleField)
-            }
-            .setNegativeButton("CANCEL", null)
-            .create()
-
-        val watcher = object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, fieldStart: Int, before: Int, count: Int) {
-                val current = overlays.getOrNull(index) ?: return
-                overlays[index] = current.copy(
-                    startMs = startField.valueLong(current.startMs),
-                    durationMs = durationField.valueLong(current.durationMs).coerceAtLeast(1L),
-                    x = (xField.valueFloat(current.x * 100f) / 100f).coerceIn(0f, 1f),
-                    y = (yField.valueFloat(current.y * 100f) / 100f).coerceIn(0f, 1f),
-                    scale = (scaleField.valueFloat(current.scale * 100f) / 100f).coerceIn(0.03f, 1f)
-                )
-                CtaOverlayStore.save(this@CtaOverlayActivity, overlays)
-                preview.setOverlays(overlays, index)
-                refreshList()
-            }
-            override fun afterTextChanged(s: android.text.Editable?) = Unit
-        }
-        listOf(startField, durationField, xField, yField, scaleField).forEach { it.addTextChangedListener(watcher) }
-        dialog.show()
+        AlertDialog.Builder(this).setTitle("Edit CTA ${index + 1}").setView(box)
+            .setPositiveButton("SAVE") { _, _ -> applyFields(index, startField, durationField, xField, yField, scaleField) }
+            .setNegativeButton("CANCEL", null).show()
     }
 
     private fun applyFields(index: Int, start: EditText, duration: EditText, x: EditText, y: EditText, scale: EditText) {
+        val current = overlays.getOrNull(index) ?: return
+        overlays[index] = current.copy(
+            startMs = start.valueLong(current.startMs).coerceAtLeast(0L),
+            durationMs = duration.valueLong(current.durationMs).coerceAtLeast(1L),
+            x = (x.valueFloat(current.x * 100f) / 100f).coerceIn(0f, 1f),
+            y = (y.valueFloat(current.y * 100f) / 100f).coerceIn(0f, 1f),
+            scale = (scale.valueFloat(current.scale * 100f) / 100f).coerceIn(0.03f, 1f)
+        )
+        CtaOverlayStore.save(this, overlays)
+        refreshList()
+    }
+}
