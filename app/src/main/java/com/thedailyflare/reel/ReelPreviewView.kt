@@ -3,9 +3,6 @@ package com.thedailyflare.reel
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
@@ -96,28 +93,7 @@ class ReelPreviewView(context: Context) : View(context) {
         if (ctaOverlays.isEmpty()) return
 
         val timelineMs = currentTimelineMs()
-        val active = ctaRenderer?.draw(canvas, timelineMs, width, height) ?: false
-        if (!active) {
-            ctaRenderer?.drawEditing(canvas, width, height)
-            drawCtaEditHint(canvas)
-        }
-    }
-
-    private fun drawCtaEditHint(canvas: Canvas) {
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = 3f
-            setColor(0xAAFFFFFF.toInt())
-        }
-        val w = width * 0.30f
-        val h = height * 0.08f
-        canvas.drawRoundRect(width - w - 18f, 18f, width - 18f, 18f + h, 12f, 12f, paint)
-        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = 28f
-            setColor(Color.WHITE)
-            typeface = Typeface.DEFAULT_BOLD
-        }
-        canvas.drawText("CTA OVERLAY", width - w + 2f, 18f + h / 2f + 10f, textPaint)
+        ctaRenderer?.draw(canvas, timelineMs, width, height)
     }
 
     private fun refreshCtaRendererIfNeeded() {
