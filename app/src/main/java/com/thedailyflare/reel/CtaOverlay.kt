@@ -17,6 +17,7 @@ data class CtaOverlay(
 object CtaOverlayStore {
     private const val PREFS = "daily_flare_reel_preferences"
     private const val KEY = "cta_video_overlays_v1"
+    private const val KEY_SELECTED = "cta_video_selected_index_v1"
     private const val SEP = "|"
 
     fun load(context: Context): List<CtaOverlay> {
@@ -45,5 +46,14 @@ object CtaOverlayStore {
             listOf(o.uri.toString(), o.startMs, o.durationMs, o.x, o.y, o.scale, o.frameDir.orEmpty(), o.frameRate).joinToString(SEP)
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, raw).apply()
+    }
+
+    fun loadSelectedIndex(context: Context, size: Int): Int {
+        val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_SELECTED, 0)
+        return saved.coerceIn(0, (size - 1).coerceAtLeast(0))
+    }
+
+    fun saveSelectedIndex(context: Context, index: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_SELECTED, index.coerceAtLeast(0)).apply()
     }
 }
