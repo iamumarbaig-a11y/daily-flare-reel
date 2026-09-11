@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.media.MediaMetadataRetriever
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
@@ -19,16 +20,32 @@ class CtaOverlayActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        overlays.addAll(CtaOverlayStore.load(this))
+        overlays.addAll(CtaOverlayStore.load(this).map { overlay ->
+            val detected = detectDurationMs(overlay.uri)
+            if (overlay.durationMs < 100L && detected > 100L) overlay.copy(durationMs = detected) else overlay
+        })
+        CtaOverlayStore.save(this, overlays)
+
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(28, 28, 28, 28) }
         root.addView(TextView(this).apply { text = "CTA OVERLAYS"; textSize = 22f; setPadding(0, 0, 0, 14) })
-        root.addView(TextView(this).apply { text = "Add green-screen CTA videos. Each overlay has its own start time, duration, position and size."; textSize = 15f; setPadding(0, 0, 0, 14) })
+        root.addView(TextView(this).apply { text = "Add CTA videos. Each overlay has its own start time, duration, position and size."; textSize = 15f; setPadding(0, 0, 0, 14) })
         root.addView(Button(this).apply { text = "ADD CTA VIDEO"; setOnClickListener { pickVideo() } }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
-        root.addView(Button(this).apply { text = "SAVE & DONE"; setOnClickListener { CtaOverlayStore.save(this@CtaOverlayActivity, overlays); finish() } }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(Button(this).apply { text = "SAVE & DONE"; setOnClickListener { saveAndFinish() } }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         setContentView(root)
         refreshList()
+    }
+
+    private fun saveAndFinish() {
+        CtaOverlayStore.save(this, overlays)
+        setResult(RESULT_OK)
+        finish()
+    }
+
+    override fun onPause() {
+        CtaOverlayStore.save(this, overlays)
+        super.onPause()
     }
 
     private fun pickVideo() {
@@ -44,15 +61,29 @@ class CtaOverlayActivity : Activity() {
         if (requestCode != 700 || resultCode != RESULT_OK || data?.data == null) return
         val uri = data.data!!
         try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
-        val duration = runCatching {
-            val r = MediaMetadataRetriever()
-            r.setDataSource(this, uri)
-            val value = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 3000L
-            r.release()
-            value
-        }.getOrDefault(3000L).coerceAtLeast(1L)
+        val duration = detectDurationMs(uri).coerceAtLeast(1000L)
         overlays.add(CtaOverlay(uri, 0L, duration, 0.82f, 0.80f, 0.25f))
+        CtaOverlayStore.save(this, overlays)
         refreshList()
+    }
+
+    private fun detectDurationMs(uri: Uri): Long {
+        val retrieverDuration = runCatching {
+            MediaMetadataRetriever().use { r ->
+                r.setDataSource(this, uri)
+                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            }
+        }.getOrDefault(0L)
+        if (retrieverDuration >= 100L) return retrieverDuration
+
+        val playerDuration = runCatching {
+            MediaPlayer.create(this, uri)?.let { player ->
+                val d = player.duration.toLong()
+                player.release()
+                d
+            } ?: 0L
+        }.getOrDefault(0L)
+        return playerDuration.coerceAtLeast(0L)
     }
 
     private fun refreshList() {
@@ -63,7 +94,7 @@ class CtaOverlayActivity : Activity() {
             row.addView(TextView(this).apply { text = "Start ${overlay.startMs}ms · Duration ${overlay.durationMs}ms · X ${(overlay.x * 100).toInt()}% · Y ${(overlay.y * 100).toInt()}% · Size ${(overlay.scale * 100).toInt()}%"; textSize = 13f })
             val actions = LinearLayout(this).apply { gravity = Gravity.END }
             actions.addView(Button(this@CtaOverlayActivity).apply { text = "EDIT"; setOnClickListener { editOverlay(index) } })
-            actions.addView(Button(this@CtaOverlayActivity).apply { text = "DELETE"; setOnClickListener { overlays.removeAt(index); refreshList() } })
+            actions.addView(Button(this@CtaOverlayActivity).apply { text = "DELETE"; setOnClickListener { overlays.removeAt(index); CtaOverlayStore.save(this@CtaOverlayActivity, overlays); refreshList() } })
             row.addView(actions)
             list.addView(row)
         }
