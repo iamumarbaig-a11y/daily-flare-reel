@@ -24,8 +24,6 @@ class CtaOverlayActivity : Activity() {
         overlays = CtaOverlayStore.load(this).toMutableList()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(16, 16, 16, 16) }
         preview = CtaEditorPreviewView(this)
-        // The preview owns the gesture state; mirror every drag/pinch change back into
-        // the Activity list so SAVE & DONE persists the actual edited position/scale.
         preview.onOverlayChanged = { index, overlay ->
             if (index in overlays.indices) overlays[index] = overlay
         }
@@ -58,21 +56,29 @@ class CtaOverlayActivity : Activity() {
         val uri = data?.data ?: return
         runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
 
-        val alphaWebm = runCatching { CtaAlphaDecoder.hasAlpha(this, uri) }.getOrDefault(false)
-        if (!alphaWebm) {
+        // VP9 WebM alpha is not reliably exposed by Android's native video decoder.
+        // Always send WebM through the isolated FFmpeg/libvpx frame decoder first.
+        // MP4 and other normal videos keep the existing native path unchanged.
+        val name = runCatching { uri.path.orEmpty().lowercase() }.getOrDefault("")
+        val mime = runCatching { contentResolver.getType(uri).orEmpty().lowercase() }.getOrDefault("")
+        val isWebm = name.endsWith(".webm") || mime.contains("webm")
+
+        if (!isWebm) {
             addOverlay(uri, null)
             return
         }
 
-        Toast.makeText(this, "Preparing transparent CTA…", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Preparing WebM CTA…", Toast.LENGTH_SHORT).show()
         Thread {
             val frameDir = CtaAlphaDecoder.decode(this, uri)
             runOnUiThread {
-                if (frameDir == null) {
-                    Toast.makeText(this, "Could not decode transparent WebM", Toast.LENGTH_LONG).show()
-                } else {
+                if (frameDir != null) {
                     addOverlay(uri, frameDir.absolutePath)
-                    Toast.makeText(this, "Transparent CTA ready", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "WebM CTA ready", Toast.LENGTH_SHORT).show()
+                } else {
+                    // If this WebM cannot be decoded by libvpx, retain the old native path.
+                    addOverlay(uri, null)
+                    Toast.makeText(this, "WebM alpha decode failed — using native video", Toast.LENGTH_LONG).show()
                 }
             }
         }.start()
