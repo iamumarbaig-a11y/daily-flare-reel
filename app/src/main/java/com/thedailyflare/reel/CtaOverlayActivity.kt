@@ -82,19 +82,11 @@ class CtaOverlayActivity : Activity() {
     }
 
     private fun pickVideo() {
-        // Some Android document providers do not advertise WebM as video/*.
-        // Use the explicit MIME list with */* so WebM files are still selectable.
+        // Some Android document providers incorrectly classify WebM as application/octet-stream
+        // or expose it without a video MIME type. Any MIME filter can therefore hide the file.
+        // Open the document picker without MIME filtering so WebM files are selectable too.
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             type = "*/*"
-            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
-                "video/mp4",
-                "video/webm",
-                "video/x-webm",
-                "video/3gpp",
-                "video/quicktime",
-                "video/x-matroska",
-                "video/*"
-            ))
             addCategory(Intent.CATEGORY_OPENABLE)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         }, 700)
@@ -218,25 +210,3 @@ class CtaOverlayActivity : Activity() {
     }
 
     private fun applyFields(index: Int, start: EditText, duration: EditText, x: EditText, y: EditText, scale: EditText) {
-        val o = overlays[index]
-        overlays[index] = o.copy(
-            startMs = start.valueLong(o.startMs),
-            durationMs = duration.valueLong(o.durationMs).coerceAtLeast(1L),
-            x = (x.valueFloat(o.x * 100f) / 100f).coerceIn(0f, 1f),
-            y = (y.valueFloat(o.y * 100f) / 100f).coerceIn(0f, 1f),
-            scale = (scale.valueFloat(o.scale * 100f) / 100f).coerceIn(0.03f, 1f)
-        )
-        CtaOverlayStore.save(this, overlays)
-        refreshList()
-        preview.setOverlays(overlays, index)
-    }
-
-    private fun field(hint: String, value: String): EditText = EditText(this).apply {
-        this.hint = hint
-        setText(value)
-        inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-    }
-
-    private fun EditText.valueLong(fallback: Long): Long = text.toString().trim().toLongOrNull()?.coerceAtLeast(0L) ?: fallback
-    private fun EditText.valueFloat(fallback: Float): Float = text.toString().trim().toFloatOrNull() ?: fallback
-}
