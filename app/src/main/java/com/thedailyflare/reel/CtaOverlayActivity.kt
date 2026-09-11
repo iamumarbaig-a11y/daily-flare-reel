@@ -24,6 +24,11 @@ class CtaOverlayActivity : Activity() {
         overlays = CtaOverlayStore.load(this).toMutableList()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(16, 16, 16, 16) }
         preview = CtaEditorPreviewView(this)
+        // The preview owns the gesture state; mirror every drag/pinch change back into
+        // the Activity list so SAVE & DONE persists the actual edited position/scale.
+        preview.onOverlayChanged = { index, overlay ->
+            if (index in overlays.indices) overlays[index] = overlay
+        }
         root.addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         val add = Button(this).apply { text = "ADD CTA VIDEO"; setOnClickListener { pickVideo() } }
         root.addView(add)
