@@ -82,8 +82,19 @@ class CtaOverlayActivity : Activity() {
     }
 
     private fun pickVideo() {
+        // Some Android document providers do not advertise WebM as video/*.
+        // Use the explicit MIME list with */* so WebM files are still selectable.
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            type = "video/*"
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
+                "video/mp4",
+                "video/webm",
+                "video/x-webm",
+                "video/3gpp",
+                "video/quicktime",
+                "video/x-matroska",
+                "video/*"
+            ))
             addCategory(Intent.CATEGORY_OPENABLE)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         }, 700)
