@@ -24,17 +24,23 @@ class CtaOverlayActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         overlays = CtaOverlayStore.load(this).toMutableList()
+        selectedIndex = if (overlays.isEmpty()) -1 else CtaOverlayStore.loadSelectedIndex(this, overlays.size)
+
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(16, 16, 16, 16) }
         preview = CtaEditorPreviewView(this)
         preview.onOverlayChanged = { index, overlay ->
             if (index in overlays.indices) overlays[index] = overlay
+        }
+        preview.onOverlayInteractionFinished = {
+            // Save once when the gesture ends, not on every finger-move frame.
+            CtaOverlayStore.save(this, overlays)
         }
         root.addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         val add = Button(this).apply { text = "ADD CTA VIDEO"; setOnClickListener { pickVideo() } }
         root.addView(add)
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        val done = Button(this).apply { text = "SAVE & DONE"; setOnClickListener { CtaOverlayStore.save(this@CtaOverlayActivity, overlays); finish() } }
+        val done = Button(this).apply { text = "SAVE & DONE"; setOnClickListener { saveAndFinish() } }
         root.addView(done)
         setContentView(root)
         refreshList()
@@ -42,6 +48,12 @@ class CtaOverlayActivity : Activity() {
 
     override fun onResume() { super.onResume(); preview.startPlayback() }
     override fun onPause() { preview.stopPlayback(); super.onPause() }
+
+    private fun saveAndFinish() {
+        CtaOverlayStore.save(this, overlays)
+        if (selectedIndex >= 0) CtaOverlayStore.saveSelectedIndex(this, selectedIndex)
+        finish()
+    }
 
     private fun pickVideo() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -69,8 +81,6 @@ class CtaOverlayActivity : Activity() {
             return
         }
 
-        // WebM alpha uses the libvpx VP9 decoder. It reads the WebM alpha sidecar
-        // and emits real RGBA PNG frames; no WebView/browser path is involved.
         Toast.makeText(this, "Preparing WebM CTA…", Toast.LENGTH_SHORT).show()
         Thread {
             val frameDir = CtaAlphaDecoder.decode(this, uri)
@@ -115,8 +125,8 @@ class CtaOverlayActivity : Activity() {
         overlays.add(CtaOverlay(uri, 0L, duration, 0.5f, 0.5f, 0.25f, frameDir, CtaAlphaDecoder.FRAME_RATE))
         selectedIndex = overlays.lastIndex
         CtaOverlayStore.save(this, overlays)
+        CtaOverlayStore.saveSelectedIndex(this, selectedIndex)
         refreshList()
-        preview.setOverlays(overlays, selectedIndex)
     }
 
     private fun refreshList() {
@@ -126,7 +136,11 @@ class CtaOverlayActivity : Activity() {
             val label = TextView(this).apply {
                 text = "CTA ${index + 1}  •  ${overlay.startMs}ms → ${overlay.startMs + overlay.durationMs}ms"
                 setPadding(8, 12, 8, 12)
-                setOnClickListener { selectedIndex = index; preview.select(index) }
+                setOnClickListener {
+                    selectedIndex = index
+                    CtaOverlayStore.saveSelectedIndex(this@CtaOverlayActivity, selectedIndex)
+                    preview.select(index)
+                }
             }
             row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             val actions = LinearLayout(this)
@@ -144,8 +158,8 @@ class CtaOverlayActivity : Activity() {
                     overlays.removeAt(index)
                     selectedIndex = selectedIndex.coerceIn(0, (overlays.size - 1).coerceAtLeast(0))
                     CtaOverlayStore.save(this@CtaOverlayActivity, overlays)
+                    if (overlays.isNotEmpty()) CtaOverlayStore.saveSelectedIndex(this@CtaOverlayActivity, selectedIndex)
                     refreshList()
-                    preview.setOverlays(overlays, selectedIndex)
                 }
             })
             row.addView(actions)
@@ -165,6 +179,7 @@ class CtaOverlayActivity : Activity() {
 
     private fun editOverlay(index: Int) {
         selectedIndex = index
+        CtaOverlayStore.saveSelectedIndex(this, selectedIndex)
         preview.select(index)
         val o = overlays[index]
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 8, 24, 0) }
