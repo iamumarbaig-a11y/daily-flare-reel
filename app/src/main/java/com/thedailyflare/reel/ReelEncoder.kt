@@ -74,6 +74,7 @@ class ReelEncoder(private val context: Context) {
         // Reuse animation buffers to avoid per-frame allocations.
         val animatedLayer = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val settledMask = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val ctaOverlayRenderer = CtaOverlayRenderer(context, CtaOverlayStore.load(context))
         try {
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); surface = codec.createInputSurface(); input = CodecInputSurface(surface!!); codec.start()
             for (frame in 0 until totalFrames) {
@@ -107,6 +108,7 @@ class ReelEncoder(private val context: Context) {
                         drawAnimatedText(canvas, title, headlines, width, height, frame, titleDelayFrames,
                             headlineWordCounts, segmentFrames, textEffect, textEffectIntensity, textRevealMode,
                             animatedLayer, settledMask)
+                        ctaOverlayRenderer.draw(canvas, frame.toLong() * 1000L / fps.toLong(), width, height)
                     } else ReelLayout.drawCover(canvas, ctaBitmap, width, height)
                 } finally {
                     input!!.render(frameBitmap, width, height, frame.toLong() * 1_000_000_000L / fps.toLong())
@@ -132,7 +134,7 @@ class ReelEncoder(private val context: Context) {
                     result >= 0 -> { val encoded = codec.getOutputBuffer(result); if (encoded != null && info.size > 0 && started) { encoded.position(info.offset); encoded.limit(info.offset + info.size); muxer.writeSampleData(track, encoded, info) }; eos = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0; codec.releaseOutputBuffer(result, false) }
                 }
             }
-        } finally { try { input?.release() } catch (_: Exception) {}; try { surface?.release() } catch (_: Exception) {}; if (started) try { muxer.stop() } catch (_: Exception) {}; muxer.release(); try { codec.stop() } catch (_: Exception) {}; codec.release() }
+        } finally { try { input?.release() } catch (_: Exception) {}; try { surface?.release() } catch (_: Exception) {}; if (started) try { muxer.stop() } catch (_: Exception) {}; muxer.release(); try { codec.stop() } catch (_: Exception) {}; codec.release(); ctaOverlayRenderer.release() }
         require(output.exists() && output.length() > 0L) { "18-second video produced no output" }
     }
 
