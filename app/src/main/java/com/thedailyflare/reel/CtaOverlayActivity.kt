@@ -17,6 +17,8 @@ import android.widget.TextView
 class CtaOverlayActivity : Activity() {
     private val overlays = mutableListOf<CtaOverlay>()
     private lateinit var list: LinearLayout
+    private lateinit var preview: CtaEditorPreviewView
+    private var selectedIndex = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -26,15 +28,45 @@ class CtaOverlayActivity : Activity() {
         })
         CtaOverlayStore.save(this, overlays)
 
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(28, 28, 28, 28) }
-        root.addView(TextView(this).apply { text = "CTA OVERLAYS"; textSize = 22f; setPadding(0, 0, 0, 14) })
-        root.addView(TextView(this).apply { text = "Add CTA videos. Each overlay has its own start time, duration, position and size."; textSize = 15f; setPadding(0, 0, 0, 14) })
-        root.addView(Button(this).apply { text = "ADD CTA VIDEO"; setOnClickListener { pickVideo() } }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 20, 20, 20)
+        }
+        root.addView(TextView(this).apply {
+            text = "CTA OVERLAYS"
+            textSize = 22f
+            setPadding(0, 0, 0, 8)
+        })
+        root.addView(TextView(this).apply {
+            text = "Drag the CTA directly on the preview. Pinch to resize. It loops so you can see the video animation."
+            textSize = 14f
+            setPadding(0, 0, 0, 10)
+        })
+
+        preview = CtaEditorPreviewView(this)
+        preview.onOverlayChanged = { index, value ->
+            if (index in overlays.indices) {
+                overlays[index] = value
+                CtaOverlayStore.save(this, overlays)
+                refreshList()
+            }
+        }
+        root.addView(preview, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        root.addView(Button(this).apply {
+            text = "ADD CTA VIDEO"
+            setOnClickListener { pickVideo() }
+        }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
-        root.addView(Button(this).apply { text = "SAVE & DONE"; setOnClickListener { saveAndFinish() } }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(Button(this).apply {
+            text = "SAVE & DONE"
+            setOnClickListener { saveAndFinish() }
+        }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         setContentView(root)
         refreshList()
+        preview.setOverlays(overlays, selectedIndex)
     }
 
     private fun saveAndFinish() {
@@ -62,9 +94,11 @@ class CtaOverlayActivity : Activity() {
         val uri = data.data!!
         try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
         val duration = detectDurationMs(uri).coerceAtLeast(1000L)
-        overlays.add(CtaOverlay(uri, 0L, duration, 0.82f, 0.80f, 0.25f))
+        overlays.add(CtaOverlay(uri, 0L, duration, 0.50f, 0.50f, 0.25f))
+        selectedIndex = overlays.lastIndex
         CtaOverlayStore.save(this, overlays)
         refreshList()
+        preview.setOverlays(overlays, selectedIndex)
     }
 
     private fun detectDurationMs(uri: Uri): Long {
@@ -89,18 +123,47 @@ class CtaOverlayActivity : Activity() {
     private fun refreshList() {
         list.removeAllViews()
         overlays.forEachIndexed { index, overlay ->
-            val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 14, 0, 14) }
-            row.addView(TextView(this).apply { text = "CTA ${index + 1}: ${overlay.uri.lastPathSegment ?: "video"}"; textSize = 16f })
-            row.addView(TextView(this).apply { text = "Start ${overlay.startMs}ms · Duration ${overlay.durationMs}ms · X ${(overlay.x * 100).toInt()}% · Y ${(overlay.y * 100).toInt()}% · Size ${(overlay.scale * 100).toInt()}%"; textSize = 13f })
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, 10, 0, 10)
+                setOnClickListener {
+                    selectedIndex = index
+                    preview.select(index)
+                    preview.setOverlays(overlays, selectedIndex)
+                    refreshList()
+                }
+            }
+            row.addView(TextView(this).apply {
+                text = "CTA ${index + 1}: ${overlay.uri.lastPathSegment ?: "video"}${if (index == selectedIndex) "  ← SELECTED" else ""}"
+                textSize = 16f
+            })
+            row.addView(TextView(this).apply {
+                text = "Start ${overlay.startMs}ms · Duration ${overlay.durationMs}ms · X ${(overlay.x * 100).toInt()}% · Y ${(overlay.y * 100).toInt()}% · Size ${(overlay.scale * 100).toInt()}%"
+                textSize = 13f
+            })
             val actions = LinearLayout(this).apply { gravity = Gravity.END }
-            actions.addView(Button(this@CtaOverlayActivity).apply { text = "EDIT"; setOnClickListener { editOverlay(index) } })
-            actions.addView(Button(this@CtaOverlayActivity).apply { text = "DELETE"; setOnClickListener { overlays.removeAt(index); CtaOverlayStore.save(this@CtaOverlayActivity, overlays); refreshList() } })
+            actions.addView(Button(this@CtaOverlayActivity).apply {
+                text = "EDIT"
+                setOnClickListener { editOverlay(index) }
+            })
+            actions.addView(Button(this@CtaOverlayActivity).apply {
+                text = "DELETE"
+                setOnClickListener {
+                    overlays.removeAt(index)
+                    selectedIndex = selectedIndex.coerceIn(0, (overlays.size - 1).coerceAtLeast(0))
+                    CtaOverlayStore.save(this@CtaOverlayActivity, overlays)
+                    refreshList()
+                    preview.setOverlays(overlays, selectedIndex)
+                }
+            })
             row.addView(actions)
             list.addView(row)
         }
     }
 
     private fun editOverlay(index: Int) {
+        selectedIndex = index
+        preview.select(index)
         val o = overlays[index]
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 8, 24, 0) }
         val start = field("Start time (ms)", o.startMs.toString())
@@ -109,17 +172,48 @@ class CtaOverlayActivity : Activity() {
         val y = field("Y position (0-100%)", (o.y * 100).toInt().toString())
         val scale = field("Size (0-100%)", (o.scale * 100).toInt().toString())
         listOf(start, duration, x, y, scale).forEach { box.addView(it) }
-        AlertDialog.Builder(this).setTitle("Edit CTA ${index + 1}").setView(box).setPositiveButton("SAVE") { _, _ ->
-            overlays[index] = o.copy(
-                startMs = start.value().toLongOrNull()?.coerceAtLeast(0L) ?: o.startMs,
-                durationMs = duration.value().toLongOrNull()?.coerceAtLeast(1L) ?: o.durationMs,
-                x = (x.value().toFloatOrNull()?.div(100f) ?: o.x).coerceIn(0f, 1f),
-                y = (y.value().toFloatOrNull()?.div(100f) ?: o.y).coerceIn(0f, 1f),
-                scale = (scale.value().toFloatOrNull()?.div(100f) ?: o.scale).coerceIn(0.03f, 1f)
-            )
-            CtaOverlayStore.save(this, overlays)
-            refreshList()
-        }.setNegativeButton("CANCEL", null).show()
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Edit CTA ${index + 1}")
+            .setView(box)
+            .setPositiveButton("SAVE") { _, _ ->
+                applyFields(index, start, duration, x, y, scale)
+            }
+            .setNegativeButton("CANCEL", null)
+            .create()
+
+        val watcher = object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                val current = overlays[index]
+                overlays[index] = current.copy(
+                    startMs = start.valueLong(current.startMs),
+                    durationMs = duration.valueLong(current.durationMs).coerceAtLeast(1L),
+                    x = (x.valueFloat(current.x * 100f) / 100f).coerceIn(0f, 1f),
+                    y = (y.valueFloat(current.y * 100f) / 100f).coerceIn(0f, 1f),
+                    scale = (scale.valueFloat(current.scale * 100f) / 100f).coerceIn(0.03f, 1f)
+                )
+                CtaOverlayStore.save(this@CtaOverlayActivity, overlays)
+                preview.setOverlays(overlays, index)
+                refreshList()
+            }
+            override fun afterTextChanged(s: android.text.Editable?) = Unit
+        }
+        listOf(start, duration, x, y, scale).forEach { it.addTextChangedListener(watcher) }
+        dialog.show()
+    }
+
+    private fun applyFields(index: Int, start: EditText, duration: EditText, x: EditText, y: EditText, scale: EditText) {
+        val o = overlays[index]
+        overlays[index] = o.copy(
+            startMs = start.valueLong(o.startMs),
+            durationMs = duration.valueLong(o.durationMs).coerceAtLeast(1L),
+            x = (x.valueFloat(o.x * 100f) / 100f).coerceIn(0f, 1f),
+            y = (y.valueFloat(o.y * 100f) / 100f).coerceIn(0f, 1f),
+            scale = (scale.valueFloat(o.scale * 100f) / 100f).coerceIn(0.03f, 1f)
+        )
+        CtaOverlayStore.save(this, overlays)
+        refreshList()
+        preview.setOverlays(overlays, index)
     }
 
     private fun field(hint: String, value: String): EditText = EditText(this).apply {
@@ -127,5 +221,7 @@ class CtaOverlayActivity : Activity() {
         setText(value)
         inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
     }
-    private fun EditText.value(): String = text.toString().trim()
+
+    private fun EditText.valueLong(fallback: Long): Long = text.toString().trim().toLongOrNull()?.coerceAtLeast(0L) ?: fallback
+    private fun EditText.valueFloat(fallback: Float): Float = text.toString().trim().toFloatOrNull() ?: fallback
 }
