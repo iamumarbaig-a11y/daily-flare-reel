@@ -69,13 +69,23 @@ class CtaOverlayActivity : Activity() {
             return
         }
 
-        // WebM uses the new Chromium/WebView alpha decoder. FFmpegKit is not involved.
+        // WebM alpha uses the libvpx VP9 decoder. It reads the WebM alpha sidecar
+        // and emits real RGBA PNG frames; no WebView/browser path is involved.
         Toast.makeText(this, "Preparing WebM CTA…", Toast.LENGTH_SHORT).show()
         Thread {
-            val result = CtaWebViewAlphaDecoder.decode(this, uri)
+            val frameDir = CtaAlphaDecoder.decode(this, uri)
             runOnUiThread {
-                if (result != null) {
-                    addOverlay(uri, result.frameDir.absolutePath, result.durationMs)
+                if (frameDir != null) {
+                    val duration = runCatching {
+                        val retriever = MediaMetadataRetriever()
+                        try {
+                            retriever.setDataSource(this, uri)
+                            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                        } finally {
+                            runCatching { retriever.release() }
+                        }
+                    }.getOrNull()?.coerceAtLeast(1L) ?: 3000L
+                    addOverlay(uri, frameDir.absolutePath, duration)
                     Toast.makeText(this, "WebM CTA ready", Toast.LENGTH_SHORT).show()
                 } else {
                     Toast.makeText(this, "WebM CTA could not be decoded", Toast.LENGTH_LONG).show()
@@ -102,7 +112,7 @@ class CtaOverlayActivity : Activity() {
                 runCatching { retriever.release() }
             }
         }.getOrNull()?.coerceAtLeast(1L) ?: 3000L
-        overlays.add(CtaOverlay(uri, 0L, duration, 0.5f, 0.5f, 0.25f, frameDir, CtaWebViewAlphaDecoder.FRAME_RATE))
+        overlays.add(CtaOverlay(uri, 0L, duration, 0.5f, 0.5f, 0.25f, frameDir, CtaAlphaDecoder.FRAME_RATE))
         selectedIndex = overlays.lastIndex
         CtaOverlayStore.save(this, overlays)
         refreshList()
