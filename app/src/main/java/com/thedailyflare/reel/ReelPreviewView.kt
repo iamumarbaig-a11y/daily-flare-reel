@@ -1,7 +1,11 @@
 package com.thedailyflare.reel
 
 import android.content.Context
-import android.graphics.*
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
@@ -73,7 +77,10 @@ class ReelPreviewView(context: Context) : View(context) {
                 ReelEncoder.ImageEffect.PAN_RIGHT -> canvas.translate(width * effectIntensity * p, 0f)
                 ReelEncoder.ImageEffect.PAN_UP -> canvas.translate(0f, -height * effectIntensity * p)
                 ReelEncoder.ImageEffect.PAN_DOWN -> canvas.translate(0f, height * effectIntensity * p)
-                ReelEncoder.ImageEffect.KEN_BURNS -> { canvas.scale(1f + effectIntensity * p, 1f + effectIntensity * p, width / 2f, height / 2f); canvas.translate(-width * effectIntensity * p * .35f, -height * effectIntensity * p * .2f) }
+                ReelEncoder.ImageEffect.KEN_BURNS -> {
+                    canvas.scale(1f + effectIntensity * p, 1f + effectIntensity * p, width / 2f, height / 2f)
+                    canvas.translate(-width * effectIntensity * p * .35f, -height * effectIntensity * p * .2f)
+                }
                 ReelEncoder.ImageEffect.NONE -> Unit
             }
             ReelLayout.drawCover(canvas, it, width, height)
@@ -86,9 +93,11 @@ class ReelPreviewView(context: Context) : View(context) {
         ReelLayout.draw(canvas, title, headlines, width, height, null, false, visible)
 
         refreshCtaRendererIfNeeded()
-        val timelineMs = (timelineProgress.coerceIn(0f, 1f) * timelineDurationMs.coerceAtLeast(1L)).toLong()
+        if (ctaOverlays.isEmpty()) return
+
+        val timelineMs = currentTimelineMs()
         val active = ctaRenderer?.draw(canvas, timelineMs, width, height) ?: false
-        if (!active && ctaOverlays.isNotEmpty()) {
+        if (!active) {
             ctaRenderer?.drawEditing(canvas, width, height)
             drawCtaEditHint(canvas)
         }
@@ -103,7 +112,11 @@ class ReelPreviewView(context: Context) : View(context) {
         val w = width * 0.30f
         val h = height * 0.08f
         canvas.drawRoundRect(width - w - 18f, 18f, width - 18f, 18f + h, 12f, 12f, paint)
-        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 28f; setColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD }
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 28f
+            setColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+        }
         canvas.drawText("CTA OVERLAY", width - w + 2f, 18f + h / 2f + 10f, textPaint)
     }
 
@@ -120,7 +133,8 @@ class ReelPreviewView(context: Context) : View(context) {
         }
     }
 
-    private fun currentTimelineMs(): Long = (timelineProgress.coerceIn(0f, 1f) * timelineDurationMs.coerceAtLeast(1L)).toLong()
+    private fun currentTimelineMs(): Long =
+        (timelineProgress.coerceIn(0f, 1f) * timelineDurationMs.coerceAtLeast(1L)).toLong()
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (showCta) return false
@@ -151,13 +165,17 @@ class ReelPreviewView(context: Context) : View(context) {
                     val d = pointerDistance(event)
                     if (lastPinchDistance > 0f && d > 1f) {
                         val factor = (d / lastPinchDistance).coerceIn(0.90f, 1.10f)
-                        ctaOverlays = ctaOverlays.toMutableList().also { it[index] = current.copy(scale = (current.scale * factor).coerceIn(0.05f, 0.80f)) }
+                        ctaOverlays = ctaOverlays.toMutableList().also {
+                            it[index] = current.copy(scale = (current.scale * factor).coerceIn(0.05f, 0.80f))
+                        }
                         lastPinchDistance = d
                     }
                 } else {
                     val x = (event.x / width.toFloat()).coerceIn(0f, 1f)
                     val y = (event.y / height.toFloat()).coerceIn(0f, 1f)
-                    ctaOverlays = ctaOverlays.toMutableList().also { it[index] = current.copy(x = x, y = y) }
+                    ctaOverlays = ctaOverlays.toMutableList().also {
+                        it[index] = current.copy(x = x, y = y)
+                    }
                 }
                 rebuildCtaRenderer()
                 invalidate()
