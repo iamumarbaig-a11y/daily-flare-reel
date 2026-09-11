@@ -14,7 +14,6 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.core.widget.addTextChangedListener
 
 class CtaOverlayActivity : Activity() {
     private val overlays = mutableListOf<CtaOverlay>()
