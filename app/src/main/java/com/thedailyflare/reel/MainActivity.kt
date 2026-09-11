@@ -104,6 +104,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::voiceTts.isInitialized && ::voiceStatus.isInitialized) refreshKokoroState()
+        if (::preview.isInitialized) preview.postDelayed({ preview.invalidate() }, 50L)
     }
 
     private fun buildUi() {
