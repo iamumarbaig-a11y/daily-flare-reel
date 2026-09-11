@@ -29,11 +29,15 @@ class CtaOverlayActivity : Activity() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(16, 16, 16, 16) }
         preview = CtaEditorPreviewView(this)
         preview.onOverlayChanged = { index, overlay ->
-            if (index in overlays.indices) overlays[index] = overlay
+            if (index in overlays.indices) {
+                // CTA library uses one shared canvas placement/size. Changing the
+                // active CTA keeps every saved CTA ready to appear at the same spot.
+                overlays = overlays.map { it.copy(x = overlay.x, y = overlay.y, scale = overlay.scale) }.toMutableList()
+            }
         }
         preview.onOverlayInteractionFinished = {
-            // Save once when the gesture ends, not on every finger-move frame.
             CtaOverlayStore.save(this, overlays)
+            CtaOverlayStore.saveSelectedIndex(this, selectedIndex)
         }
         root.addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         val add = Button(this).apply { text = "ADD CTA VIDEO"; setOnClickListener { pickVideo() } }
@@ -76,7 +80,6 @@ class CtaOverlayActivity : Activity() {
         val isWebm = displayName.endsWith(".webm") || uriText.contains(".webm") || mime.contains("webm")
 
         if (!isWebm) {
-            // Existing MP4/native CTA path is deliberately unchanged.
             addOverlay(uri, null)
             return
         }
@@ -122,11 +125,33 @@ class CtaOverlayActivity : Activity() {
                 runCatching { retriever.release() }
             }
         }.getOrNull()?.coerceAtLeast(1L) ?: 3000L
-        overlays.add(CtaOverlay(uri, 0L, duration, 0.5f, 0.5f, 0.25f, frameDir, CtaAlphaDecoder.FRAME_RATE))
+
+        // New library items inherit the current canvas placement and size.
+        val placement = overlays.getOrNull(selectedIndex)
+        val x = placement?.x ?: 0.5f
+        val y = placement?.y ?: 0.5f
+        val scale = placement?.scale ?: 0.25f
+        overlays.add(CtaOverlay(uri, 0L, duration, x, y, scale, frameDir, CtaAlphaDecoder.FRAME_RATE))
         selectedIndex = overlays.lastIndex
         CtaOverlayStore.save(this, overlays)
         CtaOverlayStore.saveSelectedIndex(this, selectedIndex)
         refreshList()
+    }
+
+    private fun selectCta(index: Int) {
+        if (index !in overlays.indices) return
+        // Carry the current canvas placement/size to the newly selected CTA.
+        // This makes the library behave like one active overlay slot.
+        val current = overlays.getOrNull(selectedIndex)
+        if (current != null && selectedIndex != index) {
+            val target = overlays[index]
+            overlays[index] = target.copy(x = current.x, y = current.y, scale = current.scale)
+        }
+        selectedIndex = index
+        CtaOverlayStore.save(this, overlays)
+        CtaOverlayStore.saveSelectedIndex(this, selectedIndex)
+        preview.select(index)
+        preview.setOverlays(overlays, selectedIndex)
     }
 
     private fun refreshList() {
@@ -134,13 +159,9 @@ class CtaOverlayActivity : Activity() {
         overlays.forEachIndexed { index, overlay ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             val label = TextView(this).apply {
-                text = "CTA ${index + 1}  •  ${overlay.startMs}ms → ${overlay.startMs + overlay.durationMs}ms"
+                text = if (index == selectedIndex) "✓ CTA ${index + 1}  •  ACTIVE" else "CTA ${index + 1}"
                 setPadding(8, 12, 8, 12)
-                setOnClickListener {
-                    selectedIndex = index
-                    CtaOverlayStore.saveSelectedIndex(this@CtaOverlayActivity, selectedIndex)
-                    preview.select(index)
-                }
+                setOnClickListener { selectCta(index) }
             }
             row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             val actions = LinearLayout(this)
@@ -156,9 +177,14 @@ class CtaOverlayActivity : Activity() {
                 setBackgroundColor(Color.rgb(211, 47, 47))
                 setOnClickListener {
                     overlays.removeAt(index)
-                    selectedIndex = selectedIndex.coerceIn(0, (overlays.size - 1).coerceAtLeast(0))
+                    selectedIndex = when {
+                        overlays.isEmpty() -> -1
+                        selectedIndex > index -> selectedIndex - 1
+                        selectedIndex == index -> selectedIndex.coerceIn(0, overlays.lastIndex)
+                        else -> selectedIndex
+                    }
                     CtaOverlayStore.save(this@CtaOverlayActivity, overlays)
-                    if (overlays.isNotEmpty()) CtaOverlayStore.saveSelectedIndex(this@CtaOverlayActivity, selectedIndex)
+                    if (selectedIndex >= 0) CtaOverlayStore.saveSelectedIndex(this@CtaOverlayActivity, selectedIndex)
                     refreshList()
                 }
             })
@@ -178,9 +204,7 @@ class CtaOverlayActivity : Activity() {
     private fun EditText.valueFloat(fallback: Float): Float = text.toString().trim().toFloatOrNull() ?: fallback
 
     private fun editOverlay(index: Int) {
-        selectedIndex = index
-        CtaOverlayStore.saveSelectedIndex(this, selectedIndex)
-        preview.select(index)
+        selectCta(index)
         val o = overlays[index]
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 8, 24, 0) }
         val startField = field("Start time (ms)", o.startMs.toString())
@@ -196,12 +220,14 @@ class CtaOverlayActivity : Activity() {
 
     private fun applyFields(index: Int, start: EditText, duration: EditText, x: EditText, y: EditText, scale: EditText) {
         val current = overlays.getOrNull(index) ?: return
-        overlays[index] = current.copy(
+        val newX = (x.valueFloat(current.x * 100f) / 100f).coerceIn(0f, 1f)
+        val newY = (y.valueFloat(current.y * 100f) / 100f).coerceIn(0f, 1f)
+        val newScale = (scale.valueFloat(current.scale * 100f) / 100f).coerceIn(0.03f, 1f)
+        // Position and size are shared by the whole CTA library; timing remains per item.
+        overlays = overlays.map { it.copy(x = newX, y = newY, scale = newScale) }.toMutableList()
+        overlays[index] = overlays[index].copy(
             startMs = start.valueLong(current.startMs).coerceAtLeast(0L),
-            durationMs = duration.valueLong(current.durationMs).coerceAtLeast(1L),
-            x = (x.valueFloat(current.x * 100f) / 100f).coerceIn(0f, 1f),
-            y = (y.valueFloat(current.y * 100f) / 100f).coerceIn(0f, 1f),
-            scale = (scale.valueFloat(current.scale * 100f) / 100f).coerceIn(0.03f, 1f)
+            durationMs = duration.valueLong(current.durationMs).coerceAtLeast(1L)
         )
         CtaOverlayStore.save(this, overlays)
         refreshList()
