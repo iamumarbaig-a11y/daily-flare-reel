@@ -14,6 +14,7 @@ class ReelPreviewView(context: Context) : View(context) {
     var ctaBitmap: Bitmap? = null
     var showCta = false
     var visualProgress = 0f
+    var timelineProgress = 0f
     var effect: ReelEncoder.ImageEffect = ReelEncoder.ImageEffect.ZOOM_IN
     var effectIntensity = 0.18f
     var textPreviewProgress = 0f
@@ -85,8 +86,25 @@ class ReelPreviewView(context: Context) : View(context) {
         ReelLayout.draw(canvas, title, headlines, width, height, null, false, visible)
 
         refreshCtaRendererIfNeeded()
-        val timelineMs = (visualProgress.coerceIn(0f, 1f) * timelineDurationMs.coerceAtLeast(1L)).toLong()
-        ctaRenderer?.draw(canvas, timelineMs, width, height)
+        val timelineMs = (timelineProgress.coerceIn(0f, 1f) * timelineDurationMs.coerceAtLeast(1L)).toLong()
+        val active = ctaRenderer?.draw(canvas, timelineMs, width, height) ?: false
+        if (!active && ctaOverlays.isNotEmpty()) {
+            ctaRenderer?.drawEditing(canvas, width, height)
+            drawCtaEditHint(canvas)
+        }
+    }
+
+    private fun drawCtaEditHint(canvas: Canvas) {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+            setColor(0xAAFFFFFF.toInt())
+        }
+        val w = width * 0.30f
+        val h = height * 0.08f
+        canvas.drawRoundRect(width - w - 18f, 18f, width - 18f, 18f + h, 12f, 12f, paint)
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 28f; setColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD }
+        canvas.drawText("CTA OVERLAY", width - w + 2f, 18f + h / 2f + 10f, textPaint)
     }
 
     private fun refreshCtaRendererIfNeeded() {
@@ -102,14 +120,16 @@ class ReelPreviewView(context: Context) : View(context) {
         }
     }
 
-    private fun currentTimelineMs(): Long = (visualProgress.coerceIn(0f, 1f) * timelineDurationMs.coerceAtLeast(1L)).toLong()
+    private fun currentTimelineMs(): Long = (timelineProgress.coerceIn(0f, 1f) * timelineDurationMs.coerceAtLeast(1L)).toLong()
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (showCta) return false
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 refreshCtaRendererIfNeeded()
-                val index = ctaRenderer?.hitTest(currentTimelineMs(), event.x, event.y, width, height) ?: -1
+                val timeline = currentTimelineMs()
+                val activeIndex = ctaRenderer?.hitTest(timeline, event.x, event.y, width, height) ?: -1
+                val index = if (activeIndex >= 0) activeIndex else ctaRenderer?.hitTestEditing(event.x, event.y, width, height) ?: -1
                 if (index >= 0) {
                     draggingCtaIndex = index
                     dragging = true
