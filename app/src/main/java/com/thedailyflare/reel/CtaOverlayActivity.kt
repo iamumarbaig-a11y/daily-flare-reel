@@ -4,12 +4,14 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
+import android.media.MediaMetadataRetriever
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 
 class CtaOverlayActivity : Activity() {
     private lateinit var list: LinearLayout
@@ -50,7 +52,35 @@ class CtaOverlayActivity : Activity() {
         if (requestCode != 700 || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-        overlays.add(CtaOverlay(uri, 0L, 3000L, 0.5f, 0.5f, 0.25f))
+
+        val alphaWebm = runCatching { CtaAlphaDecoder.hasAlpha(this, uri) }.getOrDefault(false)
+        if (!alphaWebm) {
+            addOverlay(uri, null)
+            return
+        }
+
+        Toast.makeText(this, "Preparing transparent CTA…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val frameDir = CtaAlphaDecoder.decode(this, uri)
+            runOnUiThread {
+                if (frameDir == null) {
+                    Toast.makeText(this, "Could not decode transparent WebM", Toast.LENGTH_LONG).show()
+                } else {
+                    addOverlay(uri, frameDir.absolutePath)
+                    Toast.makeText(this, "Transparent CTA ready", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun addOverlay(uri: android.net.Uri, frameDir: String?) {
+        val duration = runCatching {
+            MediaMetadataRetriever().use { retriever ->
+                retriever.setDataSource(this, uri)
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+            }
+        }.getOrNull()?.coerceAtLeast(1L) ?: 3000L
+        overlays.add(CtaOverlay(uri, 0L, duration, 0.5f, 0.5f, 0.25f, frameDir, CtaAlphaDecoder.FRAME_RATE))
         selectedIndex = overlays.lastIndex
         CtaOverlayStore.save(this, overlays)
         refreshList()
